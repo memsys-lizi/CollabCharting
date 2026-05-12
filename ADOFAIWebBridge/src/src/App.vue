@@ -1,39 +1,89 @@
 <template>
   <main class="shell">
     <section class="panel">
-      <p class="eyebrow">Collab Charting</p>
-      <h1>多人制谱示例</h1>
-      <p class="subtitle">输入名字，前端会调用 C#，并显示 C# 返回的问候语。</p>
+      <div class="header">
+        <div>
+          <p class="eyebrow">Collab Charting</p>
+          <h1>场景跳转</h1>
+        </div>
+        <span class="status" :class="{ connected }">{{ connected ? "已连接" : "未连接" }}</span>
+      </div>
 
-      <form class="form" @submit.prevent="sayHello">
-        <label>
-          <span>你的名字</span>
-          <input v-model="name" autocomplete="name" placeholder="例如：LK130" />
-        </label>
-        <button type="submit" :disabled="loading">{{ loading ? "发送中..." : "发送给 C#" }}</button>
-      </form>
+      <p class="subtitle">当前场景：{{ activeSceneLabel }}</p>
 
-      <p class="status" :class="{ connected }">{{ connected ? "Bridge 已连接" : "Bridge 未连接" }}</p>
-      <p class="result">{{ result || "C# 返回结果会显示在这里" }}</p>
+      <div class="toolbar">
+        <button type="button" :disabled="loading" @click="refreshScenes">
+          {{ loading ? "读取中..." : "刷新场景列表" }}
+        </button>
+      </div>
+
+      <p v-if="message" class="message">{{ message }}</p>
       <p v-if="error" class="error">{{ error }}</p>
+
+      <div class="scene-list">
+        <button
+          v-for="scene in scenes"
+          :key="scene.buildIndex"
+          type="button"
+          class="scene-button"
+          :class="{ active: scene.active }"
+          @click="loadScene(scene)"
+        >
+          <span class="scene-index">#{{ scene.buildIndex }}</span>
+          <span class="scene-main">
+            <strong>{{ scene.name || "(未命名场景)" }}</strong>
+            <small>{{ scene.path }}</small>
+          </span>
+          <span v-if="scene.active" class="scene-active">当前</span>
+        </button>
+      </div>
     </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { createBridgeClient } from "./bridge";
+
+type SceneInfo = {
+  buildIndex: number;
+  name: string;
+  path: string;
+  active: boolean;
+};
+
+type SceneListResult = {
+  active: {
+    buildIndex: number;
+    name: string;
+    path: string;
+  };
+  scenes: SceneInfo[];
+};
+
+type LoadSceneResult = {
+  ok: boolean;
+  buildIndex: number;
+  name: string;
+  path: string;
+};
 
 const bridge = createBridgeClient();
 const connected = ref(false);
 const loading = ref(false);
-const name = ref("");
-const result = ref("");
+const scenes = ref<SceneInfo[]>([]);
+const activeScene = ref<SceneListResult["active"] | null>(null);
+const message = ref("");
 const error = ref("");
 
-type HelloResult = {
-  message: string;
-};
+const activeSceneLabel = computed(() => {
+  if (!activeScene.value) {
+    return "尚未读取";
+  }
+
+  const index = activeScene.value.buildIndex >= 0 ? `#${activeScene.value.buildIndex} ` : "";
+  return `${index}${activeScene.value.name || "(未命名场景)"}`;
+});
 
 async function connect() {
   try {
@@ -46,8 +96,9 @@ async function connect() {
   }
 }
 
-async function sayHello() {
+async function refreshScenes() {
   loading.value = true;
+  message.value = "";
   error.value = "";
 
   try {
@@ -55,10 +106,27 @@ async function sayHello() {
       await connect();
     }
 
-    const response = await bridge.invoke<HelloResult>("collabCharting.sayHello", {
-      name: name.value
+    const result = await bridge.invoke<SceneListResult>("collabCharting.listScenes");
+    activeScene.value = result.active;
+    scenes.value = result.scenes;
+  } catch (reason) {
+    error.value = formatError(reason);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function loadScene(scene: SceneInfo) {
+  loading.value = true;
+  message.value = "";
+  error.value = "";
+
+  try {
+    const result = await bridge.invoke<LoadSceneResult>("collabCharting.loadScene", {
+      buildIndex: scene.buildIndex
     });
-    result.value = response.message;
+    message.value = `正在跳转到 #${result.buildIndex} ${result.name}`;
+    await refreshScenes();
   } catch (reason) {
     error.value = formatError(reason);
   } finally {
@@ -70,5 +138,8 @@ function formatError(reason: unknown) {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
-onMounted(connect);
+onMounted(async () => {
+  await connect();
+  await refreshScenes();
+});
 </script>

@@ -40,7 +40,8 @@ namespace CollabCharting
                 .GetMethod("ForUMM", BindingFlags.Public | BindingFlags.Static)
                 .Invoke(null, new[] { modEntry, options });
 
-            RegisterCommand("collabCharting.sayHello", BridgeCommands.SayHello);
+            RegisterCommand("collabCharting.listScenes", BridgeCommands.ListScenes);
+            RegisterCommand("collabCharting.loadScene", BridgeCommands.LoadScene);
             InvokeBridge("Start");
 
             modEntry.OnToggle = OnToggle;

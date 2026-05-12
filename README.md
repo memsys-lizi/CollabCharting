@@ -46,8 +46,9 @@ CollabCharting/out      -> ADOFAI/Mods/CollabCharting
 
 ## 当前命令
 
-前端当前会调用这个 C# 命令：
+前端当前会调用这些 C# 命令：
 
 ```text
-collabCharting.sayHello
+collabCharting.listScenes
+collabCharting.loadScene
 ```
