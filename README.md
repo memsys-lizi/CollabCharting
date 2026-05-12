@@ -2,23 +2,24 @@
 
 `Collab Charting` 是一个普通 ADOFAI/UMM 模组项目，用来测试和使用 `ADOFAIWebBridge`。
 
-这个项目本身不放前端工程。前端在：
+SDK 已经克隆在本项目内：
 
 ```text
-E:\Documents\.NET\ADOFAIWebBridge\src
+E:\Documents\.NET\CollabCharting\ADOFAIWebBridge
 ```
 
-C# SDK 在：
+前端在：
 
 ```text
-E:\Documents\.NET\ADOFAIWebBridge\src-cs\ADOFAIWebBridge
+E:\Documents\.NET\CollabCharting\ADOFAIWebBridge\src
 ```
 
 ## 开发前端
 
 ```powershell
-cd E:\Documents\.NET\ADOFAIWebBridge\src
+cd E:\Documents\.NET\CollabCharting\ADOFAIWebBridge\src
 pnpm install
+$env:VITE_BRIDGE_PORT="39800"
 pnpm dev
 ```
 
@@ -27,7 +28,7 @@ pnpm dev
 ## 生产构建
 
 ```powershell
-cd E:\Documents\.NET\ADOFAIWebBridge\src
+cd E:\Documents\.NET\CollabCharting\ADOFAIWebBridge\src
 pnpm build
 
 cd E:\Documents\.NET\CollabCharting
@@ -37,7 +38,7 @@ dotnet build .\CollabCharting.csproj -c Release
 构建会自动复制：
 
 ```text
-ADOFAIWebBridge/src/dist -> CollabCharting/out/webui/dist
+CollabCharting/ADOFAIWebBridge/src/dist -> CollabCharting/out/webui/dist
 CollabCharting/out      -> ADOFAI/Mods/CollabCharting
 ```
 
@@ -46,8 +47,8 @@ CollabCharting/out      -> ADOFAI/Mods/CollabCharting
 前端当前会调用这些 C# 命令：
 
 ```text
-bridge.getInfo
-bridge.emitDemoEvent
-project.getStatus
-project.echo
+collabCharting.getBridgeInfo
+collabCharting.emitMessage
+collabCharting.getStatus
+collabCharting.echo
 ```

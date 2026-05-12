@@ -13,7 +13,7 @@ namespace CollabCharting
 
         public string DevServerUrl = "http://127.0.0.1:5173/";
 
-        public int Port = 39820;
+        public int Port = 39800;
 
         public void OnGUI(UnityModManager.ModEntry modEntry)
         {

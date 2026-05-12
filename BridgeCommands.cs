@@ -18,10 +18,11 @@ namespace CollabCharting
             };
         }
 
-        public static object GetProjectStatus()
+        public static object GetStatus()
         {
             return new
             {
+                mod = "Collab Charting",
                 scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
                 frame = Time.frameCount,
                 time = Time.time,
@@ -39,11 +40,12 @@ namespace CollabCharting
             };
         }
 
-        public static object CreateDemoEvent(JToken? parameters)
+        public static object CreateMessageEvent(JToken? parameters)
         {
             string message = parameters?["message"]?.ToString() ?? "Hello from C#";
             return new
             {
+                mod = "Collab Charting",
                 message,
                 frame = Time.frameCount,
                 sentAt = DateTimeOffset.Now.ToUnixTimeMilliseconds()

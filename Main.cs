@@ -40,14 +40,14 @@ namespace CollabCharting
                 .GetMethod("ForUMM", BindingFlags.Public | BindingFlags.Static)
                 .Invoke(null, new[] { modEntry, options });
 
-            RegisterCommand("bridge.getInfo", parameters => BridgeCommands.GetBridgeInfo(bridge));
-            RegisterCommand("bridge.emitDemoEvent", parameters =>
+            RegisterCommand("collabCharting.getBridgeInfo", parameters => BridgeCommands.GetBridgeInfo(bridge));
+            RegisterCommand("collabCharting.emitMessage", parameters =>
             {
-                InvokeBridge("Emit", "bridge.demo", BridgeCommands.CreateDemoEvent(parameters));
+                InvokeBridge("Emit", "collabCharting.message", BridgeCommands.CreateMessageEvent(parameters));
                 return new { ok = true };
             });
-            RegisterCommand("project.getStatus", parameters => BridgeCommands.GetProjectStatus());
-            RegisterCommand("project.echo", BridgeCommands.Echo);
+            RegisterCommand("collabCharting.getStatus", parameters => BridgeCommands.GetStatus());
+            RegisterCommand("collabCharting.echo", BridgeCommands.Echo);
             InvokeBridge("Start");
 
             modEntry.OnToggle = OnToggle;

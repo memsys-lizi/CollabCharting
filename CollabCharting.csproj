@@ -33,7 +33,13 @@
   <Import Project="ADOFAIMod.targets" />
 
   <ItemGroup>
-    <ProjectReference Include="..\ADOFAIWebBridge\src-cs\ADOFAIWebBridge\ADOFAIWebBridge.csproj" PrivateAssets="all" />
+    <Compile Remove="ADOFAIWebBridge\**\*.cs" />
+    <EmbeddedResource Remove="ADOFAIWebBridge\**\*" />
+    <None Remove="ADOFAIWebBridge\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="ADOFAIWebBridge\src-cs\ADOFAIWebBridge\ADOFAIWebBridge.csproj" PrivateAssets="all" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Reference Include="0Harmony">
       <HintPath>$(ManagedAssembliesDir)\UnityModManager\0Harmony.dll</HintPath>
@@ -307,7 +313,7 @@
   <Target Name="CopyWebBridgeFilesToOut" AfterTargets="CopyToOut" BeforeTargets="DeployAndLaunch">
     <PropertyGroup>
       <OutDir>$(ProjectDir)out\</OutDir>
-      <WebBridgeFrontendDist>$(ProjectDir)..\ADOFAIWebBridge\src\dist</WebBridgeFrontendDist>
+      <WebBridgeFrontendDist>$(ProjectDir)ADOFAIWebBridge\src\dist</WebBridgeFrontendDist>
     </PropertyGroup>
     <ItemGroup>
       <BridgeRuntimeFiles Include="$(OutputPath)ADOFAIWebBridge.dll" />
@@ -319,7 +325,7 @@
     </ItemGroup>
     <Copy SourceFiles="@(BridgeRuntimeFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
     <RemoveDir Directories="$(OutDir)webui\dist" Condition="Exists('$(OutDir)webui\dist')" />
-    <Warning Text="ADOFAIWebBridge frontend dist not found. Run 'pnpm install' and 'pnpm build' in ..\ADOFAIWebBridge\src before production builds."
+    <Warning Text="ADOFAIWebBridge frontend dist not found. Run 'pnpm install' and 'pnpm build' in .\ADOFAIWebBridge\src before production builds."
              Condition="!Exists('$(WebBridgeFrontendDist)\index.html')" />
     <Copy SourceFiles="@(WebUiFiles)" DestinationFiles="@(WebUiFiles->'$(OutDir)webui\dist\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Message Text="ADOFAIWebBridge runtime and WebUI copied to out folder." Importance="high" />
