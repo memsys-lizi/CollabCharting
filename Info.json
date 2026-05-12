@@ -1,0 +1,12 @@
+{
+  "Id": "CollabCharting",
+  "DisplayName": "Collab Charting",
+  "Author": "LK130",
+  "Version": "1.0.0",
+  "ManagerVersion": "0.27.0",
+  "Requirements": [],
+  "AssemblyName": "CollabCharting.dll",
+  "EntryMethod": "CollabCharting.Main.Load",
+  "HomePage": "",
+  "Repository": ""
+}
