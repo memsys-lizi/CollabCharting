@@ -19,16 +19,15 @@ body {
 }
 
 button,
-input,
-textarea {
+input {
   font: inherit;
 }
 
 button {
-  min-height: 36px;
+  min-height: 40px;
   border: 1px solid #486280;
   border-radius: 6px;
-  padding: 0 14px;
+  padding: 0 16px;
   color: #ffffff;
   background: #20344f;
   cursor: pointer;
@@ -38,32 +37,19 @@ button:hover {
   background: #2a4365;
 }
 
-input,
-textarea {
-  width: 100%;
-  border: 1px solid #35465c;
-  border-radius: 6px;
-  color: #ffffff;
-  background: #101923;
+button:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 
 input {
-  min-height: 36px;
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #35465c;
+  border-radius: 6px;
   padding: 0 12px;
-}
-
-textarea {
-  min-height: 112px;
-  resize: vertical;
-  padding: 10px 12px;
-}
-
-pre {
-  min-height: 72px;
-  margin: 12px 0 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+  color: #ffffff;
+  background: #101923;
 }
 
 #app {
@@ -71,110 +57,73 @@ pre {
 }
 
 .shell {
-  width: min(900px, calc(100vw - 32px));
-  margin: 0 auto;
-  padding: 36px 0;
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px 16px;
 }
 
-.hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
+.panel {
+  width: min(560px, 100%);
+  border: 1px solid #26384f;
+  border-radius: 8px;
+  padding: 24px;
+  background: #131a24;
 }
 
 .eyebrow,
-.subtitle {
+.subtitle,
+label span,
+.status {
   color: #b7c8dd;
 }
 
 .eyebrow {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   font-size: 13px;
 }
 
-h1,
-h2 {
-  margin: 0;
-}
-
 h1 {
+  margin: 0;
   font-size: 30px;
 }
 
-h2 {
-  margin-bottom: 12px;
-  font-size: 18px;
-}
-
 .subtitle {
-  margin: 8px 0 0;
+  margin: 10px 0 20px;
 }
 
-.status {
-  flex: 0 0 auto;
-  border: 1px solid #795548;
-  border-radius: 999px;
-  padding: 8px 14px;
-  color: #ffccbc;
-}
-
-.status.connected {
-  border-color: #2e8b57;
-  color: #b8ffd4;
-}
-
-.toolbar,
-.input-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.toolbar {
-  margin-bottom: 16px;
-}
-
-.input-row input {
-  flex: 1 1 260px;
-}
-
-.input-row button {
-  flex: 0 0 auto;
-}
-
-.panel {
-  border: 1px solid #26384f;
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 14px;
-  background: #131a24;
+.form {
+  display: grid;
+  gap: 12px;
 }
 
 label {
   display: grid;
   gap: 8px;
-  margin-bottom: 12px;
 }
 
 label span {
-  color: #b7c8dd;
   font-size: 14px;
 }
 
-ul {
-  margin: 14px 0 0;
-  padding-left: 20px;
+.status {
+  margin: 18px 0 0;
 }
 
-@media (max-width: 720px) {
-  .hero {
-    display: block;
-  }
+.status.connected {
+  color: #b8ffd4;
+}
 
-  .status {
-    display: inline-block;
-    margin-top: 14px;
-  }
+.result {
+  min-height: 56px;
+  margin: 14px 0 0;
+  border-radius: 6px;
+  padding: 14px;
+  color: #ffffff;
+  background: #101923;
+}
+
+.error {
+  margin: 12px 0 0;
+  color: #ffccbc;
 }

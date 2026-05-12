@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Reflection;
-using System.Text;
 using UnityEngine;
 using UnityModManagerNet;
 
@@ -41,20 +40,7 @@ namespace CollabCharting
                 .GetMethod("ForUMM", BindingFlags.Public | BindingFlags.Static)
                 .Invoke(null, new[] { modEntry, options });
 
-            RegisterCommand("collabCharting.getBridgeInfo", parameters => BridgeCommands.GetBridgeInfo(bridge));
-            RegisterCommand("collabCharting.emitMessage", parameters =>
-            {
-                InvokeBridge("Emit", "collabCharting.message", BridgeCommands.CreateMessageEvent(parameters));
-                return new { ok = true };
-            });
-            RegisterCommand("collabCharting.getSampleImage", parameters =>
-            {
-                byte[] bytes = Encoding.UTF8.GetBytes(BridgeCommands.CreateSampleSvg());
-                object? url = InvokeBridge("ExposeBytes", bytes, "image/svg+xml", TimeSpan.FromMinutes(5));
-                return new { url };
-            });
-            RegisterCommand("collabCharting.getStatus", parameters => BridgeCommands.GetStatus());
-            RegisterCommand("collabCharting.echo", BridgeCommands.Echo);
+            RegisterCommand("collabCharting.sayHello", BridgeCommands.SayHello);
             InvokeBridge("Start");
 
             modEntry.OnToggle = OnToggle;
