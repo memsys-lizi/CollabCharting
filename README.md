@@ -53,4 +53,7 @@ collabCharting.getBridgeInfo
 collabCharting.emitMessage
 collabCharting.getStatus
 collabCharting.echo
+collabCharting.getSampleImage
 ```
+
+`collabCharting.getSampleImage` 会通过 `ADOFAIWebBridge.ExposeBytes` 返回一个临时图片 URL，可用于验证本地资源暴露能力。

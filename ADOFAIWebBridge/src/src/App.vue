@@ -47,9 +47,9 @@ import { createBridgeClient } from "./bridge";
 
 const bridge = createBridgeClient();
 const connected = ref(false);
-const method = ref("collabCharting.getStatus");
+const method = ref("bridge.getInfo");
 const paramsText = ref("{}");
-const eventName = ref("collabCharting.message");
+const eventName = ref("bridge.ready");
 const result = ref("");
 const events = ref<string[]>([]);
 let stopListening: (() => void) | null = null;

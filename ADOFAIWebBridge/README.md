@@ -63,7 +63,7 @@ YourMod/
 ### 方式三：NuGet 包引用
 
 ```xml
-<PackageReference Include="ADOFAIWebBridge" Version="0.1.0" />
+<PackageReference Include="ADOFAIWebBridge" Version="0.1.1" />
 ```
 
 包引用只提供 C# SDK。前端模板仍然需要从仓库的 `src` 目录复制或自行实现。
@@ -102,6 +102,8 @@ bridge.Stop();
 bridge.OpenSteamOverlay();
 bridge.RegisterCommand("yourMod.command", parameters => result);
 bridge.Emit("yourMod.event", data);
+bridge.ExposeFile(filePath, "image/png", TimeSpan.FromMinutes(5));
+bridge.ExposeBytes(bytes, "image/png", TimeSpan.FromMinutes(5));
 ```
 
 命令名建议始终带模组命名空间，例如 `yourMod.getStatus`，避免和其他模组冲突。
@@ -137,6 +139,49 @@ bridge.listen("yourMod.changed", data => {
   console.log(data)
 })
 ```
+
+## 暴露本地资源给前端
+
+如果 C# 读取了用户磁盘上的图片、音频或临时生成的资源，不要把真实路径返回给前端。应该让 Bridge 生成一个临时 URL：
+
+```csharp
+bridge.RegisterCommand("yourMod.getCover", _ =>
+{
+    string url = bridge.ExposeFile(
+        @"C:\Users\You\Pictures\cover.png",
+        "image/png",
+        TimeSpan.FromMinutes(5));
+
+    return new { url };
+});
+```
+
+前端：
+
+```ts
+const cover = await bridge.invoke<{ url: string }>("yourMod.getCover")
+image.src = cover.url
+```
+
+也可以暴露内存里的字节：
+
+```csharp
+string url = bridge.ExposeBytes(pngBytes, "image/png", TimeSpan.FromMinutes(5));
+```
+
+资源 URL 形如：
+
+```text
+http://127.0.0.1:39800/__bridge_file/<id>?bridgeToken=<token>
+```
+
+安全规则：
+
+- 前端看不到真实磁盘路径。
+- 只有 C# 主动暴露过的资源能访问。
+- 默认需要 `bridgeToken`。
+- 默认有效期由调用方传入；不传时是 10 分钟。
+- 资源只允许本机访问。
 
 ## 生产构建
 
@@ -176,7 +221,7 @@ dotnet pack .\src-cs\ADOFAIWebBridge\ADOFAIWebBridge.csproj -c Release
 生成的包在：
 
 ```text
-src-cs/ADOFAIWebBridge/bin/Release/ADOFAIWebBridge.0.1.0.nupkg
+src-cs/ADOFAIWebBridge/bin/Release/ADOFAIWebBridge.0.1.1.nupkg
 ```
 
 ## 安全说明

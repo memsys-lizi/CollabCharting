@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,8 @@ namespace ADOFAIWebBridge
     public sealed class WebBridge : IDisposable
     {
         private readonly CommandRegistry commands = new CommandRegistry();
+        private readonly Dictionary<string, ExposedResource> exposedResources = new Dictionary<string, ExposedResource>();
+        private readonly object exposedResourcesGate = new object();
         private readonly Action<string>? log;
         private WebServer? server;
         private RpcWebSocketModule? rpcModule;
@@ -94,11 +97,11 @@ namespace ADOFAIWebBridge
             var webServer = new WebServer(o => o
                     .WithUrlPrefix(LocalServerUrl)
                     .WithMode(HttpListenerMode.EmbedIO))
-                .WithModule(rpcModule);
+                .WithModule(rpcModule)
+                .WithModule(new ActionModule(ServeHttpAsync));
 
             if (Options.Mode == BridgeMode.Production && Directory.Exists(Options.WebRoot))
             {
-                webServer.WithModule(new ActionModule(ServeWebUiAsync));
                 Log($"ADOFAIWebBridge serving WebRoot: {Options.WebRoot}");
             }
             else if (Options.Mode == BridgeMode.Production)
@@ -159,6 +162,58 @@ namespace ADOFAIWebBridge
             rpcModule?.BroadcastEventAsync(payload);
         }
 
+        public string ExposeFile(string filePath, string? contentType = null, TimeSpan? ttl = null)
+        {
+            ThrowIfDisposed();
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                throw new WebBridgeException("invalid_file", "File path is required.");
+            }
+
+            string fullPath = Path.GetFullPath(filePath);
+            if (!File.Exists(fullPath))
+            {
+                throw new WebBridgeException("file_not_found", $"File not found: {fullPath}");
+            }
+
+            string id = RegisterExposedResource(new ExposedResource
+            {
+                FilePath = fullPath,
+                ContentType = string.IsNullOrWhiteSpace(contentType)
+                    ? GetContentType(Path.GetExtension(fullPath))
+                    : contentType!,
+                ExpiresAt = DateTimeOffset.UtcNow.Add(ttl ?? TimeSpan.FromMinutes(10))
+            });
+
+            return CreateExposedResourceUrl(id);
+        }
+
+        public string ExposeBytes(byte[] bytes, string contentType, TimeSpan? ttl = null)
+        {
+            ThrowIfDisposed();
+            if (bytes == null || bytes.Length == 0)
+            {
+                throw new WebBridgeException("invalid_bytes", "Bytes are required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(contentType))
+            {
+                throw new WebBridgeException("invalid_content_type", "Content type is required.");
+            }
+
+            byte[] copy = new byte[bytes.Length];
+            Buffer.BlockCopy(bytes, 0, copy, 0, bytes.Length);
+
+            string id = RegisterExposedResource(new ExposedResource
+            {
+                Bytes = copy,
+                ContentType = contentType,
+                ExpiresAt = DateTimeOffset.UtcNow.Add(ttl ?? TimeSpan.FromMinutes(10))
+            });
+
+            return CreateExposedResourceUrl(id);
+        }
+
         internal bool IsTokenAccepted(Uri requestUri)
         {
             if (!Options.RequireToken)
@@ -166,7 +221,7 @@ namespace ADOFAIWebBridge
                 return true;
             }
 
-            string? supplied = GetQueryValue(requestUri, "token");
+            string? supplied = GetQueryValue(requestUri, "token") ?? GetQueryValue(requestUri, "bridgeToken");
             return string.Equals(supplied, Token, StringComparison.Ordinal);
         }
 
@@ -213,6 +268,68 @@ namespace ADOFAIWebBridge
             }
         }
 
+        private Task ServeHttpAsync(IHttpContext context)
+        {
+            if (context.Request.Url.LocalPath.StartsWith("/__bridge_file/", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServeExposedResourceAsync(context);
+            }
+
+            if (Options.Mode == BridgeMode.Production && Directory.Exists(Options.WebRoot))
+            {
+                return ServeWebUiAsync(context);
+            }
+
+            context.Response.StatusCode = 404;
+            return context.SendStringAsync("Not Found", "text/plain", System.Text.Encoding.UTF8);
+        }
+
+        private Task ServeExposedResourceAsync(IHttpContext context)
+        {
+            if (!string.Equals(context.Request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(context.Request.HttpMethod, "HEAD", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = 405;
+                return context.SendStringAsync("Method Not Allowed", "text/plain", System.Text.Encoding.UTF8);
+            }
+
+            if (!context.Request.IsLocal || !IsTokenAccepted(context.Request.Url))
+            {
+                context.Response.StatusCode = 403;
+                return context.SendStringAsync("Forbidden", "text/plain", System.Text.Encoding.UTF8);
+            }
+
+            string id = context.Request.Url.LocalPath.Substring("/__bridge_file/".Length);
+            id = Uri.UnescapeDataString(id);
+            ExposedResource? resource = TryGetExposedResource(id);
+            if (resource == null)
+            {
+                context.Response.StatusCode = 404;
+                return context.SendStringAsync("Resource not found or expired.", "text/plain", System.Text.Encoding.UTF8);
+            }
+
+            context.Response.ContentType = resource.ContentType;
+            if (string.Equals(context.Request.HttpMethod, "HEAD", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.CompletedTask;
+            }
+
+            if (resource.Bytes != null)
+            {
+                return context.Response.OutputStream.WriteAsync(resource.Bytes, 0, resource.Bytes.Length);
+            }
+
+            if (resource.FilePath == null || !File.Exists(resource.FilePath))
+            {
+                RemoveExposedResource(id);
+                context.Response.StatusCode = 404;
+                return context.SendStringAsync("Resource file not found.", "text/plain", System.Text.Encoding.UTF8);
+            }
+
+            byte[] bytes = File.ReadAllBytes(resource.FilePath);
+            return context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+        }
+
         private Task ServeWebUiAsync(IHttpContext context)
         {
             if (!string.Equals(context.Request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
@@ -256,6 +373,74 @@ namespace ADOFAIWebBridge
             return context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
         }
 
+        private string RegisterExposedResource(ExposedResource resource)
+        {
+            resource.Id = Guid.NewGuid().ToString("N");
+            lock (exposedResourcesGate)
+            {
+                PruneExpiredExposedResources();
+                exposedResources[resource.Id] = resource;
+            }
+
+            return resource.Id;
+        }
+
+        private ExposedResource? TryGetExposedResource(string id)
+        {
+            lock (exposedResourcesGate)
+            {
+                if (!exposedResources.TryGetValue(id, out ExposedResource resource))
+                {
+                    return null;
+                }
+
+                if (resource.ExpiresAt <= DateTimeOffset.UtcNow)
+                {
+                    exposedResources.Remove(id);
+                    return null;
+                }
+
+                return resource;
+            }
+        }
+
+        private void RemoveExposedResource(string id)
+        {
+            lock (exposedResourcesGate)
+            {
+                exposedResources.Remove(id);
+            }
+        }
+
+        private void PruneExpiredExposedResources()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            var expired = new List<string>();
+            foreach (KeyValuePair<string, ExposedResource> pair in exposedResources)
+            {
+                if (pair.Value.ExpiresAt <= now)
+                {
+                    expired.Add(pair.Key);
+                }
+            }
+
+            foreach (string id in expired)
+            {
+                exposedResources.Remove(id);
+            }
+        }
+
+        private string CreateExposedResourceUrl(string id)
+        {
+            string url = $"{PublicServerUrl.TrimEnd('/')}/__bridge_file/{Uri.EscapeDataString(id)}";
+            if (!Options.RequireToken)
+            {
+                return url;
+            }
+
+            return $"{url}?bridgeToken={Uri.EscapeDataString(Token)}";
+        }
+
         private static string GetContentType(string extension)
         {
             switch (extension.ToLowerInvariant())
@@ -277,6 +462,24 @@ namespace ADOFAIWebBridge
                     return "image/jpeg";
                 case ".ico":
                     return "image/x-icon";
+                case ".gif":
+                    return "image/gif";
+                case ".webp":
+                    return "image/webp";
+                case ".bmp":
+                    return "image/bmp";
+                case ".avif":
+                    return "image/avif";
+                case ".mp3":
+                    return "audio/mpeg";
+                case ".wav":
+                    return "audio/wav";
+                case ".ogg":
+                    return "audio/ogg";
+                case ".mp4":
+                    return "video/mp4";
+                case ".webm":
+                    return "video/webm";
                 default:
                     return "application/octet-stream";
             }

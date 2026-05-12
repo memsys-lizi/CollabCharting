@@ -8,7 +8,7 @@
     <RootNamespace>ADOFAIWebBridge</RootNamespace>
     <AssemblyName>ADOFAIWebBridge</AssemblyName>
     <PackageId>ADOFAIWebBridge</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>LK130</Authors>
     <Description>Local WebSocket bridge for ADOFAI UnityModManager mods and Steam Overlay WebUI.</Description>
     <PackageTags>ADOFAI;UnityModManager;SteamOverlay;WebSocket;EmbedIO</PackageTags>
