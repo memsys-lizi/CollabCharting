@@ -29,14 +29,11 @@
     <AutoLaunchGame>false</AutoLaunchGame>
   </PropertyGroup>
 
+  <Import Project="ADOFAIWebBridge\build\ADOFAIWebBridge.props"
+          Condition="Exists('ADOFAIWebBridge\build\ADOFAIWebBridge.props')" />
+
   <!-- 导入构建目标 / Import build targets -->
   <Import Project="ADOFAIMod.targets" />
-
-  <ItemGroup>
-    <Compile Remove="ADOFAIWebBridge\**\*.cs" />
-    <EmbeddedResource Remove="ADOFAIWebBridge\**\*" />
-    <None Remove="ADOFAIWebBridge\**\*" />
-  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="ADOFAIWebBridge\src-cs\ADOFAIWebBridge\ADOFAIWebBridge.csproj" PrivateAssets="all" />

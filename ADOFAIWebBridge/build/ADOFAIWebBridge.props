@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <ADOFAIWebBridgeSourceRoot Condition="'$(ADOFAIWebBridgeSourceRoot)' == ''">$(MSBuildProjectDirectory)\ADOFAIWebBridge\</ADOFAIWebBridgeSourceRoot>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(ADOFAIWebBridgeSourceRoot)')">
+    <Compile Remove="$(ADOFAIWebBridgeSourceRoot)**\*.cs" />
+    <EmbeddedResource Remove="$(ADOFAIWebBridgeSourceRoot)**\*" />
+    <None Remove="$(ADOFAIWebBridgeSourceRoot)**\*" />
+  </ItemGroup>
+</Project>
