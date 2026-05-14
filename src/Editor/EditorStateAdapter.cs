@@ -31,6 +31,19 @@ namespace CollabCharting
             return ADOBase.customLevel.levelData.Encode();
         }
 
+        public static int GetSelectedFloorId()
+        {
+            if (ADOBase.editor == null ||
+                ADOBase.editor.selectedFloors == null ||
+                ADOBase.editor.selectedFloors.Count == 0 ||
+                ADOBase.editor.selectedFloors[0] == null)
+            {
+                return -1;
+            }
+
+            return ADOBase.editor.selectedFloors[0].seqID;
+        }
+
         public static string HashLevelText(string text)
         {
             using (SHA256 sha = SHA256.Create())
@@ -46,6 +59,11 @@ namespace CollabCharting
         }
 
         public static void ApplyLevelText(string levelText, string reason, bool preserveEntityIds = false)
+        {
+            ApplyLevelText(levelText, reason, preserveEntityIds, -1);
+        }
+
+        public static void ApplyLevelText(string levelText, string reason, bool preserveEntityIds, int selectedFloor)
         {
             if (!IsEditorReady || string.IsNullOrWhiteSpace(levelText))
             {
@@ -70,8 +88,11 @@ namespace CollabCharting
                 CollabRuntime.IsApplyingRemote = true;
                 ADOBase.customLevel.levelData = levelData;
                 ADOBase.editor.RemakePath();
+                ADOBase.editor.ApplyEventsToFloors();
+                RefreshSelectedFloorIndicators();
                 ADOBase.customLevel.ReloadAssets(force: true, reloadDecorations: false);
                 ADOBase.editor.UpdateDecorationObjects();
+                RestoreSelectedFloor(selectedFloor);
                 MarkUnsaved();
                 ADOBase.editor.ShowNotification($"协作同步：{reason}");
                 if (!preserveEntityIds)
@@ -83,6 +104,49 @@ namespace CollabCharting
             {
                 CollabRuntime.IsApplyingRemote = false;
                 OperationCapture.ResetBaseline();
+            }
+        }
+
+        private static void RefreshSelectedFloorIndicators()
+        {
+            try
+            {
+                if (ADOBase.editor == null ||
+                    ADOBase.editor.selectedFloors == null ||
+                    ADOBase.editor.selectedFloors.Count == 0 ||
+                    ADOBase.editor.selectedFloors[0] == null)
+                {
+                    return;
+                }
+
+                ADOBase.editor.ShowEventIndicators(ADOBase.editor.selectedFloors[0]);
+            }
+            catch (Exception ex)
+            {
+                Main.Mod?.Logger.Warning($"Failed to refresh event indicators after collab apply: {ex.Message}");
+            }
+        }
+
+        private static void RestoreSelectedFloor(int selectedFloor)
+        {
+            if (selectedFloor < 0 || ADOBase.editor == null || ADOBase.editor.floors == null)
+            {
+                return;
+            }
+
+            int floor = Math.Min(selectedFloor, ADOBase.editor.floors.Count - 1);
+            if (floor < 0)
+            {
+                return;
+            }
+
+            try
+            {
+                ADOBase.editor.SelectFloor(ADOBase.editor.floors[floor]);
+            }
+            catch (Exception ex)
+            {
+                Main.Mod?.Logger.Warning($"Failed to restore selected floor after collab apply: {ex.Message}");
             }
         }
 

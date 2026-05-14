@@ -144,27 +144,28 @@ namespace CollabCharting
 
             for (int i = 0; i < after.Count; i++)
             {
-                if (i < before.Count &&
-                    !usedBefore.Contains(i) &&
-                    IsSameEntity(before[i] as JObject, after[i] as JObject, domain))
-                {
-                    afterIds[i] = beforeIds[i];
-                    usedBefore.Add(i);
-                }
-            }
-
-            for (int i = 0; i < after.Count; i++)
-            {
-                if (!string.IsNullOrEmpty(afterIds[i]))
-                {
-                    continue;
-                }
-
                 int match = FindExactUnused(before, after[i], usedBefore);
                 if (match >= 0)
                 {
                     afterIds[i] = beforeIds[match];
                     usedBefore.Add(match);
+                }
+            }
+
+            if (before.Count == after.Count)
+            {
+                for (int i = 0; i < after.Count; i++)
+                {
+                    if (!string.IsNullOrEmpty(afterIds[i]) || usedBefore.Contains(i))
+                    {
+                        continue;
+                    }
+
+                    if (IsSameEntity(before[i] as JObject, after[i] as JObject, domain))
+                    {
+                        afterIds[i] = beforeIds[i];
+                        usedBefore.Add(i);
+                    }
                 }
             }
 
@@ -306,8 +307,12 @@ namespace CollabCharting
                 return true;
             }
 
-            return string.Equals(record.EventType, item.Value<string>("eventType"), StringComparison.Ordinal) &&
-                   (record.Domain == "decoration" || record.Floor == (item.Value<int?>("floor") ?? -1));
+            if (!string.Equals(record.EventType, item.Value<string>("eventType"), StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return record.Domain != "decoration" && record.Floor == (item.Value<int?>("floor") ?? -1);
         }
 
         private static bool IsSameEntity(JObject? before, JObject? after, string domain)

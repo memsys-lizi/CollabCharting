@@ -37,6 +37,23 @@ namespace CollabCharting
             return EditorStateAdapter.HashLevelText(token?.ToString(Formatting.None) ?? string.Empty);
         }
 
+        public static string DescribeBatch(CollabOperationBatch batch)
+        {
+            if (batch == null || batch.Ops.Count == 0)
+            {
+                return "no-op";
+            }
+
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (CollabAtomicOperation op in batch.Ops)
+            {
+                counts.TryGetValue(op.Kind, out int count);
+                counts[op.Kind] = count + 1;
+            }
+
+            return string.Join(", ", counts.Select(pair => pair.Value == 1 ? pair.Key : $"{pair.Key}x{pair.Value}").ToArray());
+        }
+
         public static CollabOperationBatch CreateInverse(CollabOperationBatch source, string reason)
         {
             var inverse = new CollabOperationBatch
@@ -45,7 +62,8 @@ namespace CollabCharting
                 BaseRevision = source.Revision,
                 AuthorSteamId = source.AuthorSteamId,
                 AuthorName = source.AuthorName,
-                Reason = reason
+                Reason = reason,
+                SelectedFloor = source.SelectedFloor
             };
 
             for (int i = source.Ops.Count - 1; i >= 0; i--)
@@ -74,6 +92,7 @@ namespace CollabCharting
                 AuthorSteamId = source.AuthorSteamId,
                 AuthorName = source.AuthorName,
                 Reason = source.Reason,
+                SelectedFloor = source.SelectedFloor,
                 Undone = source.Undone,
                 RequiredFiles = source.RequiredFiles
                     .Select(file => new ResourceManifestEntry
@@ -103,6 +122,11 @@ namespace CollabCharting
                     {
                         int index = acceptedOp.Payload.Value<int?>("index") ?? -1;
                         ShiftFloorTargets(batch, index, 1);
+                    }
+                    else if (acceptedOp.Kind == "path.replaceAll")
+                    {
+                        conflict = "轨道结构已被其他玩家整体修改";
+                        return false;
                     }
                     else if (acceptedOp.Kind == "path.deleteFloors")
                     {
@@ -139,6 +163,8 @@ namespace CollabCharting
                     return "path.deleteFloors";
                 case "path.deleteFloors":
                     return "path.insertFloor";
+                case "path.replaceAll":
+                    return "path.replaceAll";
                 case "event.add":
                     return "event.remove";
                 case "event.remove":
@@ -260,6 +286,8 @@ namespace CollabCharting
                     },
                     before[i]);
             }
+
+            AddPathReplaceAll(batch, mode, before, after);
         }
 
         private static void AddStringPathOperations(string before, string after, CollabOperationBatch batch)
@@ -330,6 +358,31 @@ namespace CollabCharting
                     },
                     new JValue(before[i].ToString()));
             }
+
+            AddPathReplaceAll(batch, "char", new JValue(before), new JValue(after));
+        }
+
+        private static void AddPathReplaceAll(CollabOperationBatch batch, string mode, JToken before, JToken after)
+        {
+            if (batch.Ops.Exists(op => op.Target.Domain == "path"))
+            {
+                batch.Ops.RemoveAll(op => op.Target.Domain == "path");
+            }
+
+            AddOperation(batch, "path.replaceAll", Target("path", mode == "char" ? "pathData" : "angleData", -1, string.Empty, -1),
+                new JObject
+                {
+                    ["mode"] = mode,
+                    ["oldValue"] = before.DeepClone(),
+                    ["newValue"] = after.DeepClone()
+                },
+                new JObject
+                {
+                    ["mode"] = mode,
+                    ["oldValue"] = after.DeepClone(),
+                    ["newValue"] = before.DeepClone()
+                },
+                before);
         }
 
         private static void AddSettingsOperations(JObject before, JObject after, CollabOperationBatch batch)

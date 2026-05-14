@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
+using Newtonsoft.Json.Linq;
 
 namespace CollabCharting
 {
@@ -82,6 +84,65 @@ namespace CollabCharting
             return Convert.ToBase64String(File.ReadAllBytes(full));
         }
 
+        public static List<ResourceManifestEntry> CollectRequiredFiles(CollabOperationBatch batch, string rootLevelPath)
+        {
+            var files = new Dictionary<string, ResourceManifestEntry>(StringComparer.OrdinalIgnoreCase);
+            if (batch == null || string.IsNullOrWhiteSpace(rootLevelPath) || !File.Exists(rootLevelPath))
+            {
+                return files.Values.ToList();
+            }
+
+            foreach (CollabAtomicOperation op in batch.Ops)
+            {
+                CollectRequiredFiles(op.Payload, rootLevelPath, files);
+            }
+
+            return files.Values.OrderBy(file => file.RelativePath, StringComparer.Ordinal).ToList();
+        }
+
+        private static void CollectRequiredFiles(JToken? token, string rootLevelPath, Dictionary<string, ResourceManifestEntry> files)
+        {
+            if (token == null)
+            {
+                return;
+            }
+
+            if (token.Type == JTokenType.String)
+            {
+                TryAddRequiredFile(rootLevelPath, token.Value<string>() ?? string.Empty, files);
+                return;
+            }
+
+            foreach (JToken child in token.Children())
+            {
+                CollectRequiredFiles(child, rootLevelPath, files);
+            }
+        }
+
+        private static void TryAddRequiredFile(string rootLevelPath, string value, Dictionary<string, ResourceManifestEntry> files)
+        {
+            string relativePath = NormalizeRelativePath(value);
+            if (!IsSafeRelativePath(relativePath) || !HasSyncableFileExtension(relativePath))
+            {
+                return;
+            }
+
+            string full = ResolveLevelPath(rootLevelPath, relativePath);
+            if (!File.Exists(full))
+            {
+                Main.Mod?.Logger.Warning($"Collab operation references missing resource: {relativePath}");
+                return;
+            }
+
+            FileInfo info = new FileInfo(full);
+            files[relativePath] = new ResourceManifestEntry
+            {
+                RelativePath = relativePath,
+                Size = info.Length,
+                Sha256 = ComputeSha256(full)
+            };
+        }
+
         public static void WriteFileBase64(string lobbyId, string relativePath, string base64)
         {
             string full = ResolveCachePath(lobbyId, relativePath);
@@ -150,6 +211,31 @@ namespace CollabCharting
             }
 
             return value;
+        }
+
+        private static bool HasSyncableFileExtension(string relativePath)
+        {
+            string ext = Path.GetExtension(relativePath).ToLowerInvariant();
+            switch (ext)
+            {
+                case ".adofai":
+                case ".png":
+                case ".jpg":
+                case ".jpeg":
+                case ".gif":
+                case ".bmp":
+                case ".webp":
+                case ".ogg":
+                case ".mp3":
+                case ".wav":
+                case ".flac":
+                case ".mp4":
+                case ".webm":
+                case ".mov":
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private static string ComputeSha256(string filePath)

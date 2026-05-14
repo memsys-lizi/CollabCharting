@@ -74,9 +74,12 @@ namespace CollabCharting
 
             if (!OperationDiffUtility.TryCreateBatch(before, after, "local-edit", out CollabOperationBatch batch))
             {
+                Main.Mod?.Logger.Warning("Collab operation capture saw level changes but could not classify them.");
                 return;
             }
 
+            batch.SelectedFloor = EditorStateAdapter.GetSelectedFloorId();
+            Main.Mod?.Logger.Log($"Captured collab operation batch: {OperationDiffUtility.DescribeBatch(batch)}");
             CollabRuntime.Session.PublishLocalOperationBatch(batch);
         }
     }

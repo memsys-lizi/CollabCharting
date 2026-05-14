@@ -123,6 +123,8 @@ namespace CollabCharting
 
         public string Reason { get; set; } = string.Empty;
 
+        public int SelectedFloor { get; set; } = -1;
+
         public List<CollabAtomicOperation> Ops { get; set; } = new List<CollabAtomicOperation>();
 
         public List<ResourceManifestEntry> RequiredFiles { get; set; } = new List<ResourceManifestEntry>();

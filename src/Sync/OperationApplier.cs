@@ -36,8 +36,9 @@ namespace CollabCharting
                 }
             }
 
+            int localSelectedFloor = EditorStateAdapter.GetSelectedFloorId();
             EntityIdRegistry.ApplyBatch(batch, root);
-            EditorStateAdapter.ApplyLevelText(root.ToString(Formatting.None), reason, preserveEntityIds: true);
+            EditorStateAdapter.ApplyLevelText(root.ToString(Formatting.None), reason, preserveEntityIds: true, selectedFloor: localSelectedFloor);
             return true;
         }
 
@@ -52,6 +53,8 @@ namespace CollabCharting
                     return ApplyPathDelete(root, payload, out conflict);
                 case "path.setFloor":
                     return ApplyPathSet(root, payload, out conflict);
+                case "path.replaceAll":
+                    return ApplyPathReplaceAll(root, payload, out conflict);
                 case "settings.setProperties":
                     return ApplySettings(root, payload, out conflict);
                 case "event.add":
@@ -220,6 +223,49 @@ namespace CollabCharting
             angles[index] = newValue?.DeepClone() ?? JValue.CreateNull();
             return true;
         }
+
+        private static bool ApplyPathReplaceAll(JObject root, JObject payload, out string conflict)
+        {
+            conflict = string.Empty;
+            string mode = payload.Value<string>("mode") ?? "angle";
+            JToken? oldValue = payload["oldValue"];
+            JToken? newValue = payload["newValue"];
+            if (newValue == null)
+            {
+                conflict = "轨道替换数据为空";
+                return false;
+            }
+
+            if (mode == "char")
+            {
+                string current = root.Value<string>("pathData") ?? string.Empty;
+                if (oldValue != null && oldValue.Type == JTokenType.String && current != oldValue.Value<string>())
+                {
+                    conflict = "轨道结构已被其他玩家修改";
+                    return false;
+                }
+
+                root["pathData"] = newValue.Value<string>() ?? string.Empty;
+                return true;
+            }
+
+            JArray currentAngles = EnsureArray(root, "angleData");
+            if (oldValue is JArray oldAngles && !JToken.DeepEquals(currentAngles, oldAngles))
+            {
+                conflict = "轨道结构已被其他玩家修改";
+                return false;
+            }
+
+            if (!(newValue is JArray newAngles))
+            {
+                conflict = "轨道角度数据无效";
+                return false;
+            }
+
+            root["angleData"] = newAngles.DeepClone();
+            return true;
+        }
+
 
         private static bool ApplySettings(JObject root, JObject payload, out string conflict)
         {

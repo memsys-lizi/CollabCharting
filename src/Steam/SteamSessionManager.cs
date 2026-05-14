@@ -326,21 +326,27 @@ namespace CollabCharting
                 batch.OperationId = Guid.NewGuid().ToString("N");
             }
 
+            AttachRequiredFiles(batch);
+
             if (IsHost)
             {
                 revision++;
                 batch.Revision = revision;
                 RecordOperation(batch);
+                BroadcastRequiredResources(batch);
                 Broadcast("operation.accepted", batch);
                 AddEvent($"{localName} 修改了谱面 r{revision}（{DescribeBatch(batch)}）。", localId, localName);
+                Main.Mod?.Logger.Log($"Accepted local host operation r{revision}: {DescribeBatch(batch)}");
                 EmitStatus();
             }
             else
             {
                 CSteamID host = SteamMatchmaking.GetLobbyOwner(lobbyId);
                 pendingLocalOperations[batch.OperationId] = OperationDiffUtility.CloneBatch(batch);
+                SendRequiredResources(host, batch);
                 transport.Send(host, "operation.proposal", batch, revision);
                 AddEvent($"已向房主提交本地操作（{DescribeBatch(batch)}）。", localId, localName);
+                Main.Mod?.Logger.Log($"Sent operation proposal to host: {DescribeBatch(batch)} / base r{revision}");
                 EmitStatus();
             }
         }
@@ -734,18 +740,21 @@ namespace CollabCharting
             CollabOperationBatch transformed = OperationDiffUtility.CloneBatch(batch);
             if (!OperationDiffUtility.TransformForAcceptedOperations(transformed, operationLog, out string transformConflict))
             {
+                Main.Mod?.Logger.Warning($"Rejected operation transform from {authorName}: {transformConflict}");
                 RejectOperation(authorId, transformed.OperationId, transformConflict);
                 return;
             }
 
             if (!ValidateLocks(transformed, authorId, out string lockConflict))
             {
+                Main.Mod?.Logger.Warning($"Rejected operation lock from {authorName}: {lockConflict}");
                 RejectOperation(authorId, transformed.OperationId, lockConflict);
                 return;
             }
 
             if (!OperationApplier.TryApply(transformed, $"client-change r{revision + 1}", out string conflict))
             {
+                Main.Mod?.Logger.Warning($"Rejected operation apply from {authorName}: {conflict}");
                 RejectOperation(authorId, transformed.OperationId, conflict);
                 return;
             }
@@ -755,8 +764,10 @@ namespace CollabCharting
             transformed.AuthorSteamId = authorId;
             transformed.AuthorName = authorName;
             RecordOperation(transformed);
+            BroadcastRequiredResources(transformed, authorId);
             Broadcast("operation.accepted", transformed);
             AddEvent($"{authorName} 的操作已同步 r{revision}（{DescribeBatch(transformed)}）。", authorId, authorName);
+            Main.Mod?.Logger.Log($"Accepted peer operation from {authorName} r{revision}: {DescribeBatch(transformed)}");
             EmitStatus();
         }
 
@@ -860,25 +871,67 @@ namespace CollabCharting
 
         private static string DescribeBatch(CollabOperationBatch batch)
         {
-            if (batch == null || batch.Ops.Count == 0)
+            return OperationDiffUtility.DescribeBatch(batch);
+        }
+
+        private static void AttachRequiredFiles(CollabOperationBatch batch)
+        {
+            if (!EditorStateAdapter.IsEditorReady)
             {
-                return "无操作";
+                return;
             }
 
-            Dictionary<string, int> counts = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (CollabAtomicOperation op in batch.Ops)
+            batch.RequiredFiles = ResourceSync.CollectRequiredFiles(batch, EditorStateAdapter.CurrentLevelPath);
+        }
+
+        private void BroadcastRequiredResources(CollabOperationBatch batch, string exceptSteamId = "")
+        {
+            if (batch == null || batch.RequiredFiles.Count == 0)
             {
-                counts.TryGetValue(op.Kind, out int count);
-                counts[op.Kind] = count + 1;
+                return;
             }
 
-            var parts = new List<string>();
-            foreach (KeyValuePair<string, int> pair in counts)
+            foreach (CollabMember member in GetMembers())
             {
-                parts.Add(pair.Value == 1 ? pair.Key : $"{pair.Key}x{pair.Value}");
+                if (member.IsLocal ||
+                    string.Equals(member.SteamId, exceptSteamId, StringComparison.Ordinal) ||
+                    !ulong.TryParse(member.SteamId, out ulong id))
+                {
+                    continue;
+                }
+
+                SendRequiredResources(new CSteamID(id), batch);
+            }
+        }
+
+        private void SendRequiredResources(CSteamID peer, CollabOperationBatch batch)
+        {
+            if (!peer.IsValid() ||
+                batch == null ||
+                batch.RequiredFiles.Count == 0 ||
+                !EditorStateAdapter.IsEditorReady)
+            {
+                return;
             }
 
-            return string.Join(", ", parts.ToArray());
+            foreach (ResourceManifestEntry file in batch.RequiredFiles)
+            {
+                try
+                {
+                    transport.Send(peer, "resource.file", new
+                    {
+                        LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
+                        file.RelativePath,
+                        file.Size,
+                        file.Sha256,
+                        Base64 = ResourceSync.ReadFileBase64(EditorStateAdapter.CurrentLevelPath, file.RelativePath)
+                    }, revision);
+                }
+                catch (Exception ex)
+                {
+                    Main.Mod?.Logger.Warning($"Failed to send required collab resource {file.RelativePath}: {ex.Message}");
+                }
+            }
         }
 
         private void Broadcast(string type, object payload)
