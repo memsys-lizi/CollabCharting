@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using HarmonyLib;
 using UnityEngine;
 using UnityModManagerNet;
 
@@ -10,7 +11,9 @@ namespace CollabCharting
     {
         private static object? bridge;
         private static Type? bridgeType;
+        private static Harmony? harmony;
         private static bool enabled;
+        private static float lastOverlayOpenAt = -10f;
 
         public static UnityModManager.ModEntry? Mod { get; private set; }
 
@@ -32,7 +35,6 @@ namespace CollabCharting
             Set(options, "PreferredPort", Settings.Port);
             Set(options, "DevServerUrl", Settings.DevServerUrl);
             Set(options, "Mode", Enum.Parse(modeType, Settings.DevelopmentMode ? "Development" : "Production"));
-            Set(options, "OpenKey", Settings.OpenKey.ToString());
             Set(options, "UseSteamOverlay", true);
             Set(options, "RequireToken", true);
 
@@ -42,10 +44,16 @@ namespace CollabCharting
 
             RegisterCommand("collabCharting.listScenes", BridgeCommands.ListScenes);
             RegisterCommand("collabCharting.loadScene", BridgeCommands.LoadScene);
+            CollabWebCommands.Register(RegisterCommand);
             InvokeBridge("Start");
+            CollabToastOverlay.Ensure();
+            CollabRuntime.Initialize();
+            harmony = new Harmony(modEntry.Info.Id);
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
 
             modEntry.OnToggle = OnToggle;
             modEntry.OnUpdate = OnUpdate;
+            modEntry.OnUnload = OnUnload;
             modEntry.OnGUI = Settings.OnGUI;
             modEntry.OnSaveGUI = Settings.OnSaveGUI;
 
@@ -59,7 +67,30 @@ namespace CollabCharting
 
         public static void OpenOverlay()
         {
+            if (!ADOBase.isLevelEditor)
+            {
+                Mod?.Logger.Warning("Collab WebUI can only be opened from the level editor.");
+                return;
+            }
+
+            if (Time.unscaledTime - lastOverlayOpenAt < 1.5f)
+            {
+                return;
+            }
+
+            lastOverlayOpenAt = Time.unscaledTime;
+            CollabRuntime.Session.WarmupSteam();
             InvokeBridge("OpenSteamOverlay");
+        }
+
+        public static void EmitOverlayEvent(string eventName, object data)
+        {
+            if (bridge == null)
+            {
+                return;
+            }
+
+            InvokeBridge("Emit", eventName, data);
         }
 
         private static bool OnToggle(UnityModManager.ModEntry modEntry, bool value)
@@ -75,10 +106,22 @@ namespace CollabCharting
                 return;
             }
 
-            if (Settings.EnableHotkey && Input.GetKeyDown(Settings.OpenKey))
+            MainThreadDispatcher.Pump();
+            CollabRuntime.Update(dt);
+        }
+
+        private static bool OnUnload(UnityModManager.ModEntry modEntry)
+        {
+            CollabRuntime.Shutdown();
+            harmony?.UnpatchAll(modEntry.Info.Id);
+            harmony = null;
+            if (bridge is IDisposable disposable)
             {
-                OpenOverlay();
+                disposable.Dispose();
             }
+
+            bridge = null;
+            return true;
         }
 
         private static void Set(object target, string property, object value)
@@ -107,7 +150,7 @@ namespace CollabCharting
             throw new MissingMethodException(bridgeType.FullName, method);
         }
 
-        private static void RegisterCommand(string name, Func<Newtonsoft.Json.Linq.JToken?, object> handler)
+        private static void RegisterCommand(string name, Func<Newtonsoft.Json.Linq.JToken?, object?> handler)
         {
             if (bridge == null || bridgeType == null)
             {

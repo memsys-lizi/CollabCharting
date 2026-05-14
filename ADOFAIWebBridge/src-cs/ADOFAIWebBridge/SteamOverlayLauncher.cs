@@ -35,7 +35,16 @@ namespace ADOFAIWebBridge
                     return false;
                 }
 
-                object mode = Enum.Parse(modeType, "k_EActivateGameOverlayToWebPageMode_Default");
+                object mode;
+                try
+                {
+                    mode = Enum.Parse(modeType, "k_EActivateGameOverlayToWebPageMode_Modal");
+                }
+                catch
+                {
+                    mode = Enum.Parse(modeType, "k_EActivateGameOverlayToWebPageMode_Default");
+                }
+
                 method.Invoke(null, new[] { url, mode });
                 return true;
             }

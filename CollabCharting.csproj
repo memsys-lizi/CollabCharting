@@ -53,8 +53,14 @@
     <Reference Include="DOTweenPro">
       <HintPath>$(ManagedAssembliesDir)\DOTweenPro.dll</HintPath>
     </Reference>
+    <Reference Include="Steamworks.NET">
+      <HintPath>$(ManagedAssembliesDir)\com.rlabrecque.steamworks.net.dll</HintPath>
+    </Reference>
     <Reference Include="RDTools">
       <HintPath>$(ManagedAssembliesDir)\RDTools.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(ManagedAssembliesDir)\Unity.TextMeshPro.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine">
       <HintPath>$(ManagedAssembliesDir)\UnityEngine.dll</HintPath>
