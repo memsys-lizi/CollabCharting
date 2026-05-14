@@ -16,6 +16,7 @@ namespace CollabCharting
         private readonly Dictionary<string, CollabLock> locks = new Dictionary<string, CollabLock>();
         private readonly List<CollabOperationBatch> operationLog = new List<CollabOperationBatch>();
         private readonly Dictionary<string, CollabOperationBatch> pendingLocalOperations = new Dictionary<string, CollabOperationBatch>();
+        private readonly HashSet<ulong> initialSyncSent = new HashSet<ulong>();
         private Callback<LobbyChatUpdate_t>? lobbyChatUpdate;
         private Callback<GameLobbyJoinRequested_t>? joinRequested;
         private CallResult<LobbyCreated_t>? createLobbyResult;
@@ -73,8 +74,15 @@ namespace CollabCharting
             }
 
             transport.Start();
-            lobbyChatUpdate = Callback<LobbyChatUpdate_t>.Create(OnLobbyChatUpdate);
-            joinRequested = Callback<GameLobbyJoinRequested_t>.Create(OnGameLobbyJoinRequested);
+            if (lobbyChatUpdate == null)
+            {
+                lobbyChatUpdate = Callback<LobbyChatUpdate_t>.Create(OnLobbyChatUpdate);
+            }
+
+            if (joinRequested == null)
+            {
+                joinRequested = Callback<GameLobbyJoinRequested_t>.Create(OnGameLobbyJoinRequested);
+            }
         }
 
         public CollabStatus GetStatus()
@@ -155,6 +163,7 @@ namespace CollabCharting
             locks.Clear();
             operationLog.Clear();
             pendingLocalOperations.Clear();
+            initialSyncSent.Clear();
             EntityIdRegistry.Reset();
             ClearPendingPlaybackSync();
             waitingForEditor = false;
@@ -322,7 +331,6 @@ namespace CollabCharting
                 revision++;
                 batch.Revision = revision;
                 RecordOperation(batch);
-                BroadcastCurrentResources();
                 Broadcast("operation.accepted", batch);
                 AddEvent($"{localName} 修改了谱面 r{revision}（{DescribeBatch(batch)}）。", localId, localName);
                 EmitStatus();
@@ -330,7 +338,6 @@ namespace CollabCharting
             else
             {
                 CSteamID host = SteamMatchmaking.GetLobbyOwner(lobbyId);
-                SendCurrentResources(host);
                 pendingLocalOperations[batch.OperationId] = OperationDiffUtility.CloneBatch(batch);
                 transport.Send(host, "operation.proposal", batch, revision);
                 AddEvent($"已向房主提交本地操作（{DescribeBatch(batch)}）。", localId, localName);
@@ -372,6 +379,7 @@ namespace CollabCharting
 
             lobbyId = new CSteamID(result.m_ulSteamIDLobby);
             revision = 1;
+            initialSyncSent.Clear();
             SteamMatchmaking.SetLobbyData(lobbyId, "modVersion", Main.Mod?.Info.Version ?? "unknown");
             SteamMatchmaking.SetLobbyData(lobbyId, "protocolVersion", ProtocolVersion);
             SteamMatchmaking.SetLobbyData(lobbyId, "hostSteamId", SteamUser.GetSteamID().m_SteamID.ToString());
@@ -425,12 +433,6 @@ namespace CollabCharting
             if (!IsHost)
             {
                 return;
-            }
-
-            CSteamID changed = new CSteamID(update.m_ulSteamIDUserChanged);
-            if ((update.m_rgfChatMemberStateChange & (uint)EChatMemberStateChange.k_EChatMemberStateChangeEntered) != 0)
-            {
-                MainThreadDispatcher.Enqueue(() => SendInitialSync(changed));
             }
         }
 
@@ -500,6 +502,13 @@ namespace CollabCharting
                 return;
             }
 
+            CSteamID local = SteamUser.GetSteamID();
+            if (!peer.IsValid() || peer == local || initialSyncSent.Contains(peer.m_SteamID))
+            {
+                return;
+            }
+
+            initialSyncSent.Add(peer.m_SteamID);
             syncState = "sending";
             SendCurrentResources(peer);
             transport.Send(peer, "level.initial", new CollabInitialLevel
@@ -533,19 +542,6 @@ namespace CollabCharting
             }
         }
 
-        private void BroadcastCurrentResources()
-        {
-            foreach (CollabMember member in GetMembers())
-            {
-                if (member.IsLocal || !ulong.TryParse(member.SteamId, out ulong id))
-                {
-                    continue;
-                }
-
-                SendCurrentResources(new CSteamID(id));
-            }
-        }
-
         private void HandleResourceFile(JToken payload)
         {
             string relativePath = payload.Value<string>("RelativePath") ?? string.Empty;
@@ -559,8 +555,11 @@ namespace CollabCharting
                 ResourceSync.WriteFileBase64(LobbyId, relativePath, base64);
             }
 
-            syncState = "syncing";
-            AddEvent($"已接收资源：{relativePath}");
+            if (syncState != "synced")
+            {
+                syncState = "syncing";
+            }
+
             EmitStatus();
         }
 
@@ -756,7 +755,6 @@ namespace CollabCharting
             transformed.AuthorSteamId = authorId;
             transformed.AuthorName = authorName;
             RecordOperation(transformed);
-            BroadcastCurrentResources();
             Broadcast("operation.accepted", transformed);
             AddEvent($"{authorName} 的操作已同步 r{revision}（{DescribeBatch(transformed)}）。", authorId, authorName);
             EmitStatus();
