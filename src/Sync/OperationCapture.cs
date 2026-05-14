@@ -1,36 +1,63 @@
-using System;
+using ADOFAI;
 
 namespace CollabCharting
 {
     internal static class OperationCapture
     {
-        private static string baselineHash = string.Empty;
-        private static string baselineText = string.Empty;
-        private static string observedHash = string.Empty;
-        private static string observedText = string.Empty;
-        private static float dirtySeconds;
+        private static SaveStateScope? rootScope;
+        private static string rootBefore = string.Empty;
+        private static int depth;
 
         public static void ResetBaseline()
         {
-            if (!EditorStateAdapter.IsEditorReady)
-            {
-                baselineHash = string.Empty;
-                baselineText = string.Empty;
-                observedHash = string.Empty;
-                observedText = string.Empty;
-                dirtySeconds = 0f;
-                return;
-            }
-
-            observedText = EditorStateAdapter.EncodeCurrentLevel();
-            baselineText = observedText;
-            baselineHash = EditorStateAdapter.HashLevelText(observedText);
-            observedHash = baselineHash;
-            dirtySeconds = 0f;
+            rootScope = null;
+            rootBefore = string.Empty;
+            depth = 0;
         }
 
         public static void Update(float dt)
         {
+        }
+
+        public static void Begin(SaveStateScope scope, bool dataHasChanged)
+        {
+            if (!dataHasChanged ||
+                scope == null ||
+                depth < 0 ||
+                !CollabRuntime.Session.InLobby ||
+                CollabRuntime.IsApplyingRemote ||
+                EditorPlaybackState.IsPreviewPlaying ||
+                !EditorStateAdapter.IsEditorReady)
+            {
+                return;
+            }
+
+            if (depth == 0)
+            {
+                rootScope = scope;
+                rootBefore = EditorStateAdapter.EncodeCurrentLevel();
+            }
+
+            depth++;
+        }
+
+        public static void End(SaveStateScope scope)
+        {
+            if (depth <= 0 || scope == null)
+            {
+                return;
+            }
+
+            depth--;
+            if (scope != rootScope || depth != 0)
+            {
+                return;
+            }
+
+            string before = rootBefore;
+            rootScope = null;
+            rootBefore = string.Empty;
+
             if (!CollabRuntime.Session.InLobby ||
                 CollabRuntime.IsApplyingRemote ||
                 EditorPlaybackState.IsPreviewPlaying ||
@@ -39,43 +66,18 @@ namespace CollabCharting
                 return;
             }
 
-            string levelText = EditorStateAdapter.EncodeCurrentLevel();
-            string hash = EditorStateAdapter.HashLevelText(levelText);
-            if (string.IsNullOrEmpty(baselineHash))
-            {
-                baselineHash = hash;
-                baselineText = levelText;
-                observedHash = hash;
-                observedText = levelText;
-                return;
-            }
-
-            if (hash == baselineHash)
-            {
-                dirtySeconds = 0f;
-                observedHash = hash;
-                observedText = levelText;
-                return;
-            }
-
-            if (hash != observedHash)
-            {
-                observedHash = hash;
-                observedText = levelText;
-                dirtySeconds = 0f;
-                return;
-            }
-
-            dirtySeconds += dt;
-            if (dirtySeconds < Math.Max(0.1f, Main.Settings.SnapshotDebounceSeconds))
+            string after = EditorStateAdapter.EncodeCurrentLevel();
+            if (EditorStateAdapter.HashLevelText(before) == EditorStateAdapter.HashLevelText(after))
             {
                 return;
             }
 
-            CollabRuntime.Session.PublishLocalSnapshot(observedText, baselineText, "local-edit");
-            baselineText = observedText;
-            baselineHash = observedHash;
-            dirtySeconds = 0f;
+            if (!OperationDiffUtility.TryCreateBatch(before, after, "local-edit", out CollabOperationBatch batch))
+            {
+                return;
+            }
+
+            CollabRuntime.Session.PublishLocalOperationBatch(batch);
         }
     }
 }

@@ -10,11 +10,12 @@ namespace CollabCharting
     internal sealed class SteamSessionManager : IDisposable
     {
         private const int MaxMembers = 8;
-        private const string ProtocolVersion = "1";
+        private const string ProtocolVersion = "2";
         private readonly SteamTransport transport = new SteamTransport();
         private readonly List<string> recentEvents = new List<string>();
         private readonly Dictionary<string, CollabLock> locks = new Dictionary<string, CollabLock>();
-        private readonly List<CollabHistoryEntry> history = new List<CollabHistoryEntry>();
+        private readonly List<CollabOperationBatch> operationLog = new List<CollabOperationBatch>();
+        private readonly Dictionary<string, CollabOperationBatch> pendingLocalOperations = new Dictionary<string, CollabOperationBatch>();
         private Callback<LobbyChatUpdate_t>? lobbyChatUpdate;
         private Callback<GameLobbyJoinRequested_t>? joinRequested;
         private CallResult<LobbyCreated_t>? createLobbyResult;
@@ -25,7 +26,7 @@ namespace CollabCharting
         private string syncState = "idle";
         private float syncProgress;
         private float lockHeartbeatTimer;
-        private CollabSnapshot? pendingPlaybackSnapshot;
+        private readonly List<CollabOperationBatch> pendingPlaybackOperations = new List<CollabOperationBatch>();
         private string pendingPlaybackReason = string.Empty;
         private string pendingPlaybackLevelPath = string.Empty;
         private bool pendingPlaybackNoticeShown;
@@ -152,7 +153,9 @@ namespace CollabCharting
             lobbyId = CSteamID.Nil;
             revision = 0;
             locks.Clear();
-            history.Clear();
+            operationLog.Clear();
+            pendingLocalOperations.Clear();
+            EntityIdRegistry.Reset();
             ClearPendingPlaybackSync();
             waitingForEditor = false;
             syncState = "idle";
@@ -297,45 +300,40 @@ namespace CollabCharting
             ApplyPendingPlaybackSyncIfReady();
         }
 
-        public void PublishLocalSnapshot(string levelText, string beforeLevelText, string reason)
+        public void PublishLocalOperationBatch(CollabOperationBatch batch)
         {
-            if (!InLobby || string.IsNullOrWhiteSpace(levelText))
+            if (!InLobby || batch == null || batch.Ops.Count == 0)
             {
                 return;
+            }
+
+            string localId = SteamUser.GetSteamID().m_SteamID.ToString();
+            string localName = SteamFriends.GetPersonaName();
+            batch.AuthorSteamId = localId;
+            batch.AuthorName = localName;
+            batch.BaseRevision = revision;
+            if (string.IsNullOrWhiteSpace(batch.OperationId))
+            {
+                batch.OperationId = Guid.NewGuid().ToString("N");
             }
 
             if (IsHost)
             {
                 revision++;
-                RecordHistory(SteamUser.GetSteamID().m_SteamID.ToString(), SteamFriends.GetPersonaName(), beforeLevelText, levelText, reason);
+                batch.Revision = revision;
+                RecordOperation(batch);
                 BroadcastCurrentResources();
-                var snapshot = new CollabSnapshot
-                {
-                    Revision = revision,
-                    LevelText = levelText,
-                    BeforeLevelText = beforeLevelText,
-                    LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
-                    Reason = reason
-                };
-                Broadcast("snapshot.update", snapshot);
-                string localId = SteamUser.GetSteamID().m_SteamID.ToString();
-                string localName = SteamFriends.GetPersonaName();
-                AddEvent($"{localName} 修改了谱面 r{revision}。", localId, localName);
+                Broadcast("operation.accepted", batch);
+                AddEvent($"{localName} 修改了谱面 r{revision}（{DescribeBatch(batch)}）。", localId, localName);
                 EmitStatus();
             }
             else
             {
                 CSteamID host = SteamMatchmaking.GetLobbyOwner(lobbyId);
                 SendCurrentResources(host);
-                transport.Send(host, "snapshot.proposal", new CollabSnapshot
-                {
-                    Revision = revision,
-                    LevelText = levelText,
-                    BeforeLevelText = beforeLevelText,
-                    LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
-                    Reason = reason
-                }, revision);
-                AddEvent("已向房主提交本地编辑。", SteamUser.GetSteamID().m_SteamID.ToString(), SteamFriends.GetPersonaName());
+                pendingLocalOperations[batch.OperationId] = OperationDiffUtility.CloneBatch(batch);
+                transport.Send(host, "operation.proposal", batch, revision);
+                AddEvent($"已向房主提交本地操作（{DescribeBatch(batch)}）。", localId, localName);
                 EmitStatus();
             }
         }
@@ -350,7 +348,7 @@ namespace CollabCharting
             }
 
             CSteamID host = SteamMatchmaking.GetLobbyOwner(lobbyId);
-            transport.Send(host, "history.request", new CollabHistoryRequest { Redo = redo }, revision);
+            transport.Send(host, "operation.undoRequest", new CollabHistoryRequest { Redo = redo }, revision);
             AddEvent(redo ? "已向房主请求协作 Redo。" : "已向房主请求协作 Undo。");
             EmitStatus();
         }
@@ -381,6 +379,7 @@ namespace CollabCharting
             syncState = "hosting";
             AddEvent("已创建协作房间。", SteamUser.GetSteamID().m_SteamID.ToString(), SteamFriends.GetPersonaName());
             OperationCapture.ResetBaseline();
+            EntityIdRegistry.InitializeFromCurrentLevel();
             EmitStatus();
         }
 
@@ -393,6 +392,16 @@ namespace CollabCharting
             }
 
             lobbyId = new CSteamID(result.m_ulSteamIDLobby);
+            string remoteProtocol = SteamMatchmaking.GetLobbyData(lobbyId, "protocolVersion");
+            if (!string.IsNullOrWhiteSpace(remoteProtocol) &&
+                !string.Equals(remoteProtocol, ProtocolVersion, StringComparison.Ordinal))
+            {
+                SteamMatchmaking.LeaveLobby(lobbyId);
+                lobbyId = CSteamID.Nil;
+                Fail($"协作协议不兼容：房间为 r{remoteProtocol}，当前 Mod 为 r{ProtocolVersion}。");
+                return;
+            }
+
             syncState = IsHost ? "hosting" : "syncing";
             AddEvent("已加入协作房间。", SteamUser.GetSteamID().m_SteamID.ToString(), SteamFriends.GetPersonaName());
             EmitStatus();
@@ -452,14 +461,17 @@ namespace CollabCharting
                     case "resource.file":
                         HandleResourceFile(envelope.Payload);
                         break;
-                    case "snapshot.initial":
-                        HandleInitialSnapshot(envelope.Payload);
+                    case "level.initial":
+                        HandleInitialLevel(envelope.Payload);
                         break;
-                    case "snapshot.update":
-                        HandleSnapshotUpdate(envelope.Payload);
+                    case "operation.accepted":
+                        HandleOperationAccepted(envelope.Payload);
                         break;
-                    case "snapshot.proposal":
-                        HandleSnapshotProposal(envelope);
+                    case "operation.proposal":
+                        HandleOperationProposal(envelope);
+                        break;
+                    case "operation.rejected":
+                        HandleOperationRejected(envelope.Payload);
                         break;
                     case "lock.update":
                         HandleLockUpdate(envelope.Payload);
@@ -467,7 +479,7 @@ namespace CollabCharting
                     case "lock.release":
                         HandleLockRelease(envelope.Payload);
                         break;
-                    case "history.request":
+                    case "operation.undoRequest":
                         HandleHistoryRequestEnvelope(envelope);
                         break;
                     case "history.notice":
@@ -490,12 +502,11 @@ namespace CollabCharting
 
             syncState = "sending";
             SendCurrentResources(peer);
-            transport.Send(peer, "snapshot.initial", new CollabSnapshot
+            transport.Send(peer, "level.initial", new CollabInitialLevel
             {
                 Revision = revision,
                 LevelText = EditorStateAdapter.EncodeCurrentLevel(),
-                LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
-                Reason = "initial-sync"
+                LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath)
             }, revision);
             syncState = "hosting";
             syncProgress = 1f;
@@ -558,7 +569,6 @@ namespace CollabCharting
             if (ADOBase.editor == null)
             {
                 pendingPlaybackLevelPath = levelPath;
-                pendingPlaybackSnapshot = null;
                 pendingPlaybackReason = "initial-sync";
                 waitingForEditor = true;
                 MainThreadDispatcher.Enqueue(EditorSceneNavigator.EnsureEditorScene);
@@ -569,7 +579,6 @@ namespace CollabCharting
             if (EditorPlaybackState.IsPreviewPlaying)
             {
                 pendingPlaybackLevelPath = levelPath;
-                pendingPlaybackSnapshot = null;
                 pendingPlaybackReason = "initial-sync";
                 NotifyPlaybackSyncQueued("预览播放中，远端变更已排队，停止预览后自动应用。");
                 return;
@@ -578,11 +587,11 @@ namespace CollabCharting
             MainThreadDispatcher.Enqueue(() => EditorStateAdapter.LoadLevelFromCache(levelPath));
         }
 
-        private void QueueOrApplySnapshot(CollabSnapshot snapshot, string reason)
+        private void QueueOrApplyOperation(CollabOperationBatch batch, string reason)
         {
             if (ADOBase.editor == null)
             {
-                pendingPlaybackSnapshot = snapshot;
+                pendingPlaybackOperations.Add(batch);
                 pendingPlaybackReason = reason;
                 pendingPlaybackLevelPath = string.Empty;
                 waitingForEditor = true;
@@ -593,26 +602,29 @@ namespace CollabCharting
 
             if (EditorPlaybackState.IsPreviewPlaying)
             {
-                pendingPlaybackSnapshot = snapshot;
+                pendingPlaybackOperations.Add(batch);
                 pendingPlaybackReason = reason;
                 pendingPlaybackLevelPath = string.Empty;
                 NotifyPlaybackSyncQueued("预览播放中，远端变更已排队，停止预览后自动应用。");
                 return;
             }
 
-            MainThreadDispatcher.Enqueue(() => EditorStateAdapter.ApplySnapshot(snapshot.LevelText, reason));
+            if (!OperationApplier.TryApply(batch, reason, out string conflict))
+            {
+                Fail($"应用协作操作失败：{conflict}");
+            }
         }
 
         private void ApplyPendingPlaybackSyncIfReady()
         {
             if (EditorPlaybackState.IsPreviewPlaying ||
                 ADOBase.editor == null ||
-                (pendingPlaybackSnapshot == null && string.IsNullOrWhiteSpace(pendingPlaybackLevelPath)))
+                (pendingPlaybackOperations.Count == 0 && string.IsNullOrWhiteSpace(pendingPlaybackLevelPath)))
             {
                 return;
             }
 
-            CollabSnapshot? snapshot = pendingPlaybackSnapshot;
+            List<CollabOperationBatch> batches = new List<CollabOperationBatch>(pendingPlaybackOperations);
             string reason = pendingPlaybackReason;
             string levelPath = pendingPlaybackLevelPath;
             ClearPendingPlaybackSync();
@@ -624,9 +636,17 @@ namespace CollabCharting
                 syncProgress = 1f;
                 AddEvent("预览结束，已应用排队的初始同步。");
             }
-            else if (snapshot != null)
+            else if (batches.Count > 0)
             {
-                MainThreadDispatcher.Enqueue(() => EditorStateAdapter.ApplySnapshot(snapshot.LevelText, reason));
+                foreach (CollabOperationBatch batch in batches)
+                {
+                    if (!OperationApplier.TryApply(batch, reason, out string conflict))
+                    {
+                        Fail($"应用排队协作操作失败：{conflict}");
+                        return;
+                    }
+                }
+
                 syncState = IsHost ? "hosting" : "synced";
                 syncProgress = 1f;
                 AddEvent("预览结束，已应用排队的协作变更。");
@@ -650,7 +670,7 @@ namespace CollabCharting
 
         private void ClearPendingPlaybackSync()
         {
-            pendingPlaybackSnapshot = null;
+            pendingPlaybackOperations.Clear();
             pendingPlaybackReason = string.Empty;
             pendingPlaybackLevelPath = string.Empty;
             pendingPlaybackNoticeShown = false;
@@ -661,12 +681,15 @@ namespace CollabCharting
             waitingForEditor = false;
         }
 
-        private void HandleInitialSnapshot(JToken payload)
+        private void HandleInitialLevel(JToken payload)
         {
-            CollabSnapshot snapshot = payload.ToObject<CollabSnapshot>() ?? new CollabSnapshot();
-            revision = snapshot.Revision;
-            string levelPath = ResourceSync.ResolveCachePath(LobbyId, snapshot.LevelRelativePath);
-            File.WriteAllText(levelPath, snapshot.LevelText);
+            CollabInitialLevel initial = payload.ToObject<CollabInitialLevel>() ?? new CollabInitialLevel();
+            revision = initial.Revision;
+            operationLog.Clear();
+            pendingLocalOperations.Clear();
+            EntityIdRegistry.InitializeFromLevelText(initial.LevelText);
+            string levelPath = ResourceSync.ResolveCachePath(LobbyId, initial.LevelRelativePath);
+            File.WriteAllText(levelPath, initial.LevelText);
             syncState = "synced";
             syncProgress = 1f;
             AddEvent("初始关卡同步完成。");
@@ -674,22 +697,27 @@ namespace CollabCharting
             EmitStatus();
         }
 
-        private void HandleSnapshotUpdate(JToken payload)
+        private void HandleOperationAccepted(JToken payload)
         {
-            CollabSnapshot snapshot = payload.ToObject<CollabSnapshot>() ?? new CollabSnapshot();
-            if (snapshot.Revision <= revision)
+            CollabOperationBatch batch = payload.ToObject<CollabOperationBatch>() ?? new CollabOperationBatch();
+            if (batch.Revision <= revision || string.IsNullOrWhiteSpace(batch.OperationId))
             {
                 return;
             }
 
-            revision = snapshot.Revision;
-            QueueOrApplySnapshot(snapshot, $"r{snapshot.Revision}");
-            CSteamID hostId = InLobby ? SteamMatchmaking.GetLobbyOwner(lobbyId) : CSteamID.Nil;
-            AddEvent($"房主同步已应用 r{revision}。", hostId.m_SteamID.ToString(), hostId.IsValid() ? SteamFriends.GetFriendPersonaName(hostId) : "房主");
+            bool ownPending = pendingLocalOperations.Remove(batch.OperationId);
+            revision = batch.Revision;
+            RecordOperation(batch);
+            if (!ownPending)
+            {
+                QueueOrApplyOperation(batch, $"r{batch.Revision}");
+            }
+
+            AddEvent($"{batch.AuthorName} 的操作已同步 r{revision}（{DescribeBatch(batch)}）。", batch.AuthorSteamId, batch.AuthorName);
             EmitStatus();
         }
 
-        private void HandleSnapshotProposal(SteamTransport.NetEnvelope envelope)
+        private void HandleOperationProposal(SteamTransport.NetEnvelope envelope)
         {
             if (!IsHost)
             {
@@ -697,85 +725,79 @@ namespace CollabCharting
             }
 
             JToken payload = envelope.Payload ?? new JObject();
-            CollabSnapshot snapshot = payload.ToObject<CollabSnapshot>() ?? new CollabSnapshot();
+            CollabOperationBatch batch = payload.ToObject<CollabOperationBatch>() ?? new CollabOperationBatch();
             string authorId = envelope.Sender;
             string authorName = ulong.TryParse(authorId, out ulong steamId)
                 ? SteamFriends.GetFriendPersonaName(new CSteamID(steamId))
                 : "成员";
-            if (snapshot.Revision != revision)
+            batch.AuthorSteamId = authorId;
+            batch.AuthorName = string.IsNullOrWhiteSpace(batch.AuthorName) ? authorName : batch.AuthorName;
+            CollabOperationBatch transformed = OperationDiffUtility.CloneBatch(batch);
+            if (!OperationDiffUtility.TransformForAcceptedOperations(transformed, operationLog, out string transformConflict))
             {
-                if (!TryRebaseStaleSnapshot(snapshot, authorId, authorName))
-                {
-                    EmitStatus();
-                    return;
-                }
+                RejectOperation(authorId, transformed.OperationId, transformConflict);
+                return;
+            }
+
+            if (!ValidateLocks(transformed, authorId, out string lockConflict))
+            {
+                RejectOperation(authorId, transformed.OperationId, lockConflict);
+                return;
+            }
+
+            if (!OperationApplier.TryApply(transformed, $"client-change r{revision + 1}", out string conflict))
+            {
+                RejectOperation(authorId, transformed.OperationId, conflict);
+                return;
             }
 
             revision++;
-            snapshot.Revision = revision;
-            QueueOrApplySnapshot(snapshot, $"client-change r{snapshot.Revision}");
-            RecordHistory(authorId, authorName, snapshot.BeforeLevelText, snapshot.LevelText, snapshot.Reason);
+            transformed.Revision = revision;
+            transformed.AuthorSteamId = authorId;
+            transformed.AuthorName = authorName;
+            RecordOperation(transformed);
             BroadcastCurrentResources();
-            Broadcast("snapshot.update", snapshot);
-            AddEvent($"{authorName} 的编辑已同步 r{revision}。", authorId, authorName);
+            Broadcast("operation.accepted", transformed);
+            AddEvent($"{authorName} 的操作已同步 r{revision}（{DescribeBatch(transformed)}）。", authorId, authorName);
             EmitStatus();
         }
 
-        private bool TryRebaseStaleSnapshot(CollabSnapshot snapshot, string authorId, string authorName)
+        private void HandleOperationRejected(JToken payload)
         {
-            string currentLevelText = EditorStateAdapter.EncodeCurrentLevel();
-            if (string.IsNullOrWhiteSpace(snapshot.BeforeLevelText) ||
-                string.IsNullOrWhiteSpace(snapshot.LevelText) ||
-                string.IsNullOrWhiteSpace(currentLevelText))
+            string operationId = payload.Value<string>("operationId") ?? string.Empty;
+            string reason = payload.Value<string>("reason") ?? "操作被房主拒绝";
+            if (pendingLocalOperations.TryGetValue(operationId, out CollabOperationBatch pending))
             {
-                RejectStaleSnapshot(authorId, authorName, "缺少可合并的修改基线。");
-                return false;
-            }
-
-            try
-            {
-                List<JsonDiffOperation> diff = JsonPatchUtility.CreateDiff(snapshot.BeforeLevelText, snapshot.LevelText);
-                if (diff.Count == 0)
+                pendingLocalOperations.Remove(operationId);
+                CollabOperationBatch inverse = OperationDiffUtility.CreateInverse(pending, "revert-rejected-operation");
+                if (!OperationApplier.TryApply(inverse, "撤回未确认操作", out string conflict))
                 {
-                    AddEvent($"{authorName} 的过期提交没有实际修改。", authorId, authorName);
-                    return false;
+                    Main.Mod?.Logger.Warning($"Failed to revert rejected operation: {conflict}");
                 }
-
-                if (!JsonPatchUtility.TryApply(currentLevelText, diff, reverse: false, out string rebasedLevelText, out string conflict))
-                {
-                    RejectStaleSnapshot(authorId, authorName, conflict);
-                    return false;
-                }
-
-                snapshot.BeforeLevelText = currentLevelText;
-                snapshot.LevelText = rebasedLevelText;
-                snapshot.Reason = string.IsNullOrWhiteSpace(snapshot.Reason)
-                    ? "rebased-local-edit"
-                    : snapshot.Reason + "+rebased";
-                AddEvent($"{authorName} 的并行编辑已自动合并。", authorId, authorName);
-                return true;
             }
-            catch (Exception ex)
+
+            if (ADOBase.editor != null)
             {
-                RejectStaleSnapshot(authorId, authorName, ex.Message);
-                return false;
+                ADOBase.editor.ShowNotification(reason);
             }
+
+            AddEvent(reason);
+            EmitStatus();
         }
 
-        private void RejectStaleSnapshot(string authorId, string authorName, string reason)
+        private void RejectOperation(string authorId, string operationId, string reason)
         {
-            AddEvent($"无法自动合并 {authorName} 的编辑：{reason}", authorId, authorName);
-            SendHistoryNotice(authorId, false, $"你的修改和其他人的修改冲突，未自动合并：{reason}");
-            if (ulong.TryParse(authorId, out ulong stalePeer))
+            AddEvent($"已拒绝成员操作：{reason}", authorId);
+            if (ulong.TryParse(authorId, out ulong peer))
             {
-                transport.Send(new CSteamID(stalePeer), "snapshot.update", new CollabSnapshot
+                transport.Send(new CSteamID(peer), "operation.rejected", new
                 {
-                    Revision = revision,
-                    LevelText = EditorStateAdapter.EncodeCurrentLevel(),
-                    LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
-                    Reason = "stale-proposal-conflict"
+                    operationId,
+                    reason
                 }, revision);
             }
+
+            EmitStatus();
         }
 
         private void HandleLockUpdate(JToken payload)
@@ -795,6 +817,70 @@ namespace CollabCharting
             string target = payload.Value<string>("target") ?? string.Empty;
             locks.Remove(target);
             EmitStatus();
+        }
+
+        private bool ValidateLocks(CollabOperationBatch batch, string authorId, out string conflict)
+        {
+            conflict = string.Empty;
+            foreach (CollabAtomicOperation op in batch.Ops)
+            {
+                foreach (string target in GetPossibleLockTargets(op))
+                {
+                    if (!locks.TryGetValue(target, out CollabLock collabLock))
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(collabLock.OwnerSteamId, authorId, StringComparison.Ordinal))
+                    {
+                        conflict = $"{collabLock.OwnerName} 正在编辑该对象";
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static IEnumerable<string> GetPossibleLockTargets(CollabAtomicOperation op)
+        {
+            if (op.Target.Domain == "event")
+            {
+                yield return $"event:{op.Target.Floor}:{op.Target.EventType}:{op.Target.Index}";
+                yield return $"floor:{op.Target.Floor}";
+            }
+            else if (op.Target.Domain == "decoration")
+            {
+                yield return $"decoration:{op.Target.Index}";
+                yield return op.Target.EntityId;
+            }
+            else if (op.Target.Domain == "path" && op.Target.Index >= 0)
+            {
+                yield return $"floor:{op.Target.Index}";
+            }
+        }
+
+        private static string DescribeBatch(CollabOperationBatch batch)
+        {
+            if (batch == null || batch.Ops.Count == 0)
+            {
+                return "无操作";
+            }
+
+            Dictionary<string, int> counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (CollabAtomicOperation op in batch.Ops)
+            {
+                counts.TryGetValue(op.Kind, out int count);
+                counts[op.Kind] = count + 1;
+            }
+
+            var parts = new List<string>();
+            foreach (KeyValuePair<string, int> pair in counts)
+            {
+                parts.Add(pair.Value == 1 ? pair.Key : $"{pair.Key}x{pair.Value}");
+            }
+
+            return string.Join(", ", parts.ToArray());
         }
 
         private void Broadcast(string type, object payload)
@@ -912,39 +998,18 @@ namespace CollabCharting
             }
         }
 
-        private void RecordHistory(string authorSteamId, string authorName, string beforeLevelText, string afterLevelText, string reason)
+        private void RecordOperation(CollabOperationBatch batch)
         {
-            if (string.IsNullOrWhiteSpace(beforeLevelText) || string.IsNullOrWhiteSpace(afterLevelText))
+            if (batch == null || string.IsNullOrWhiteSpace(batch.OperationId))
             {
                 return;
             }
 
-            try
+            operationLog.RemoveAll(existing => string.Equals(existing.OperationId, batch.OperationId, StringComparison.Ordinal));
+            operationLog.Add(OperationDiffUtility.CloneBatch(batch));
+            if (operationLog.Count > 256)
             {
-                List<JsonDiffOperation> diff = JsonPatchUtility.CreateDiff(beforeLevelText, afterLevelText);
-                if (diff.Count == 0)
-                {
-                    return;
-                }
-
-                history.Add(new CollabHistoryEntry
-                {
-                    Id = Guid.NewGuid().ToString("N"),
-                    Revision = revision,
-                    AuthorSteamId = authorSteamId,
-                    AuthorName = string.IsNullOrWhiteSpace(authorName) ? authorSteamId : authorName,
-                    Reason = reason,
-                    Diff = diff
-                });
-
-                if (history.Count > 256)
-                {
-                    history.RemoveAt(0);
-                }
-            }
-            catch (Exception ex)
-            {
-                Main.Mod?.Logger.Warning($"Failed to record collab history: {ex.Message}");
+                operationLog.RemoveAt(0);
             }
         }
 
@@ -966,15 +1031,16 @@ namespace CollabCharting
                 return;
             }
 
-            CollabHistoryEntry? entry = FindHistoryEntry(authorSteamId, redo);
+            CollabOperationBatch? entry = FindHistoryEntry(authorSteamId, redo);
             if (entry == null)
             {
                 SendHistoryNotice(authorSteamId, false, redo ? "没有可重做的个人操作。" : "没有可撤销的个人操作。");
                 return;
             }
 
-            string current = EditorStateAdapter.EncodeCurrentLevel();
-            if (!JsonPatchUtility.TryApply(current, entry.Diff, reverse: !redo, out string patched, out string conflict))
+            CollabOperationBatch inverse = OperationDiffUtility.CreateInverse(entry, redo ? "collab-redo" : "collab-undo");
+            inverse.BaseRevision = revision;
+            if (!OperationApplier.TryApply(inverse, redo ? "协作 Redo" : "协作 Undo", out string conflict))
             {
                 SendHistoryNotice(authorSteamId, false, $"协作历史冲突：{conflict}");
                 AddEvent($"已拒绝 {entry.AuthorName} 的 {(redo ? "Redo" : "Undo")}：{conflict}");
@@ -984,27 +1050,21 @@ namespace CollabCharting
 
             entry.Undone = !redo;
             revision++;
-            var snapshot = new CollabSnapshot
-            {
-                Revision = revision,
-                LevelText = patched,
-                BeforeLevelText = current,
-                LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
-                Reason = redo ? "collab-redo" : "collab-undo"
-            };
-
-            MainThreadDispatcher.Enqueue(() => EditorStateAdapter.ApplySnapshot(patched, redo ? "协作 Redo" : "协作 Undo"));
-            Broadcast("snapshot.update", snapshot);
+            inverse.Revision = revision;
+            inverse.AuthorSteamId = entry.AuthorSteamId;
+            inverse.AuthorName = entry.AuthorName;
+            RecordOperation(inverse);
+            Broadcast("operation.accepted", inverse);
             SendHistoryNotice(authorSteamId, true, redo ? "已重做你的上一步协作操作。" : "已撤销你的上一步协作操作。");
             AddEvent($"{entry.AuthorName} {(redo ? "重做" : "撤销")}了自己的操作 r{revision}。", entry.AuthorSteamId, entry.AuthorName);
             EmitStatus();
         }
 
-        private CollabHistoryEntry? FindHistoryEntry(string authorSteamId, bool redo)
+        private CollabOperationBatch? FindHistoryEntry(string authorSteamId, bool redo)
         {
-            for (int i = history.Count - 1; i >= 0; i--)
+            for (int i = operationLog.Count - 1; i >= 0; i--)
             {
-                CollabHistoryEntry entry = history[i];
+                CollabOperationBatch entry = operationLog[i];
                 if (entry.Undone == redo && string.Equals(entry.AuthorSteamId, authorSteamId, StringComparison.Ordinal))
                 {
                     return entry;

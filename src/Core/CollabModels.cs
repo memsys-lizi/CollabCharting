@@ -100,6 +100,75 @@ namespace CollabCharting
         public string Reason { get; set; } = string.Empty;
     }
 
+    internal sealed class CollabInitialLevel
+    {
+        public int Revision { get; set; }
+
+        public string LevelText { get; set; } = string.Empty;
+
+        public string LevelRelativePath { get; set; } = string.Empty;
+    }
+
+    internal sealed class CollabOperationBatch
+    {
+        public string OperationId { get; set; } = string.Empty;
+
+        public int BaseRevision { get; set; }
+
+        public int Revision { get; set; }
+
+        public string AuthorSteamId { get; set; } = string.Empty;
+
+        public string AuthorName { get; set; } = string.Empty;
+
+        public string Reason { get; set; } = string.Empty;
+
+        public List<CollabAtomicOperation> Ops { get; set; } = new List<CollabAtomicOperation>();
+
+        public List<ResourceManifestEntry> RequiredFiles { get; set; } = new List<ResourceManifestEntry>();
+
+        public bool Undone { get; set; }
+    }
+
+    internal sealed class CollabAtomicOperation
+    {
+        public string Kind { get; set; } = string.Empty;
+
+        public CollabOperationTarget Target { get; set; } = new CollabOperationTarget();
+
+        public string BeforeHash { get; set; } = string.Empty;
+
+        public JObject Payload { get; set; } = new JObject();
+
+        public JObject InversePayload { get; set; } = new JObject();
+    }
+
+    internal sealed class CollabOperationTarget
+    {
+        public string Domain { get; set; } = string.Empty;
+
+        public string EntityId { get; set; } = string.Empty;
+
+        public int Floor { get; set; } = -1;
+
+        public string EventType { get; set; } = string.Empty;
+
+        public int Index { get; set; } = -1;
+    }
+
+    internal sealed class CollabPropertyChange
+    {
+        public string Path { get; set; } = string.Empty;
+
+        public bool OldExists { get; set; }
+
+        public JToken? OldValue { get; set; }
+
+        public bool NewExists { get; set; }
+
+        public JToken? NewValue { get; set; }
+    }
+
     internal sealed class CollabHistoryRequest
     {
         public bool Redo { get; set; }
@@ -125,6 +194,8 @@ namespace CollabCharting
         public string Reason { get; set; } = string.Empty;
 
         public List<JsonDiffOperation> Diff { get; set; } = new List<JsonDiffOperation>();
+
+        public CollabOperationBatch? Batch { get; set; }
 
         public bool Undone { get; set; }
     }

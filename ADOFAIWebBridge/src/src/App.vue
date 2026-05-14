@@ -92,9 +92,9 @@
               <h2>同步</h2>
               <p>{{ syncLabel }}</p>
             </div>
-            <button type="button" class="ghost icon-button" :disabled="busy || !status?.InLobby" @click="forceSnapshot">
+            <button type="button" class="ghost icon-button" :disabled="busy || !status?.InLobby" @click="forceSync">
               <HardDriveDownload class="icon" />
-              立即同步
+              同步状态
             </button>
           </div>
 
@@ -397,9 +397,9 @@ function openInviteDialog() {
   });
 }
 
-function forceSnapshot() {
+function forceSync() {
   void withBusy(async () => {
-    status.value = await bridge.invoke<CollabStatus>("collab.forceSnapshot");
+    status.value = await bridge.invoke<CollabStatus>("collab.forceSync");
   });
 }
 

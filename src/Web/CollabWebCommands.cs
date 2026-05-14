@@ -1,4 +1,5 @@
 using System;
+using ADOFAI;
 using Newtonsoft.Json.Linq;
 
 namespace CollabCharting
@@ -12,10 +13,13 @@ namespace CollabCharting
             register("collab.leaveLobby", _ => CollabRuntime.Session.LeaveLobby());
             register("collab.getFriends", _ => CollabRuntime.Session.GetFriends());
             register("collab.openInviteDialog", _ => CollabRuntime.Session.OpenInviteDialog());
-            register("collab.forceSnapshot", _ =>
+            register("collab.forceSync", _ =>
             {
-                string text = EditorStateAdapter.EncodeCurrentLevel();
-                CollabRuntime.Session.PublishLocalSnapshot(text, text, "manual-sync");
+                if (ADOBase.editor != null)
+                {
+                    ADOBase.editor.ShowNotification("精确操作同步已启用，不再手动推送完整快照。");
+                }
+
                 return CollabRuntime.Session.GetStatus();
             });
             register("collab.joinLobby", parameters =>

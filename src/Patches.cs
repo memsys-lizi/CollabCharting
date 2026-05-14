@@ -96,6 +96,7 @@ namespace CollabCharting
         private static void Postfix(SaveStateScope __instance, bool dataHasChanged)
         {
             EditGuard.Begin(__instance, dataHasChanged);
+            OperationCapture.Begin(__instance, dataHasChanged);
         }
     }
 
@@ -105,6 +106,7 @@ namespace CollabCharting
         private static void Postfix(SaveStateScope __instance)
         {
             EditGuard.End(__instance);
+            OperationCapture.End(__instance);
         }
     }
 }

@@ -42,6 +42,11 @@ namespace CollabCharting
 
         public static void ApplySnapshot(string levelText, string reason)
         {
+            ApplyLevelText(levelText, reason, preserveEntityIds: false);
+        }
+
+        public static void ApplyLevelText(string levelText, string reason, bool preserveEntityIds = false)
+        {
             if (!IsEditorReady || string.IsNullOrWhiteSpace(levelText))
             {
                 return;
@@ -69,6 +74,10 @@ namespace CollabCharting
                 ADOBase.editor.UpdateDecorationObjects();
                 MarkUnsaved();
                 ADOBase.editor.ShowNotification($"协作同步：{reason}");
+                if (!preserveEntityIds)
+                {
+                    EntityIdRegistry.InitializeFromLevelText(levelText);
+                }
             }
             finally
             {
@@ -88,6 +97,7 @@ namespace CollabCharting
             try
             {
                 ADOBase.editor.OpenLevel(levelPath);
+                EntityIdRegistry.InitializeFromLevelText(File.ReadAllText(levelPath));
             }
             finally
             {
