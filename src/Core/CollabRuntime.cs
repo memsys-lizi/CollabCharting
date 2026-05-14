@@ -7,6 +7,8 @@ namespace CollabCharting
         private static bool initialized;
         private static bool hasSeenEditorDuringLobby;
         private static float editorMissingSeconds;
+        private static float selectionLockRefreshSeconds;
+        private static string lastSelectionLockTarget = string.Empty;
 
         public static SteamSessionManager Session { get; } = new SteamSessionManager();
 
@@ -35,6 +37,7 @@ namespace CollabCharting
             {
                 Session.Update(dt);
                 EnforceEditorLifecycle(dt);
+                RefreshSelectionLock(dt);
                 OperationCapture.Update(dt);
                 EditorToolbarEntry.Tick();
                 EditorLockOverlay.Update();
@@ -92,6 +95,65 @@ namespace CollabCharting
             }
 
             return true;
+        }
+
+        private static void RefreshSelectionLock(float dt)
+        {
+            if (!Session.InLobby || IsApplyingRemote || ADOBase.editor == null)
+            {
+                selectionLockRefreshSeconds = 0f;
+                lastSelectionLockTarget = string.Empty;
+                return;
+            }
+
+            string target = GetCurrentSelectionLockTarget();
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                selectionLockRefreshSeconds = 0f;
+                lastSelectionLockTarget = string.Empty;
+                return;
+            }
+
+            selectionLockRefreshSeconds += dt;
+            if (string.Equals(target, lastSelectionLockTarget, StringComparison.Ordinal) &&
+                selectionLockRefreshSeconds < 2f)
+            {
+                return;
+            }
+
+            lastSelectionLockTarget = target;
+            selectionLockRefreshSeconds = 0f;
+            AcquireSelectionLock(target);
+        }
+
+        private static string GetCurrentSelectionLockTarget()
+        {
+            scnEditor editor = ADOBase.editor;
+            if (editor.selectedDecorations != null && editor.selectedDecorations.Count > 0)
+            {
+                int index = scrDecorationManager.GetDecorationIndex(editor.selectedDecorations[0]);
+                if (index >= 0)
+                {
+                    return $"decoration:{index}";
+                }
+            }
+
+            if (!editor.SelectionIsEmpty() &&
+                editor.levelEventsPanel != null &&
+                editor.levelEventsPanel.selectedEventType != ADOFAI.LevelEventType.None)
+            {
+                int floor = editor.selectedFloors[0].seqID;
+                ADOFAI.LevelEventType eventType = editor.levelEventsPanel.selectedEventType;
+                int index = editor.levelEventsPanel.EventNumOfTab(eventType);
+                return $"event:{floor}:{eventType}:{index}";
+            }
+
+            if (!editor.SelectionIsEmpty())
+            {
+                return $"floor:{editor.selectedFloors[0].seqID}";
+            }
+
+            return string.Empty;
         }
 
         private static void EnforceEditorLifecycle(float dt)

@@ -31,11 +31,9 @@ namespace CollabCharting
 
                 bool isLocal = CollabRuntime.Session.IsLocalLock(collabLock);
                 active.Add(collabLock.Target);
-                if (floorId >= 0)
+                if (floorId >= 0 && !isLocal)
                 {
-                    activeFloors[floorId] = activeFloors.TryGetValue(floorId, out bool hasRemote)
-                        ? hasRemote || !isLocal
-                        : !isLocal;
+                    activeFloors[floorId] = true;
                 }
 
                 TextMesh label = GetOrCreate(collabLock.Target);
@@ -66,7 +64,7 @@ namespace CollabCharting
 
             foreach (KeyValuePair<int, bool> pair in activeFloors)
             {
-                ApplyFloorHighlight(pair.Key, pair.Value ? RemoteLockColor : LocalLockColor);
+                ApplyFloorHighlight(pair.Key, RemoteLockColor);
             }
 
             var restore = new List<int>();
