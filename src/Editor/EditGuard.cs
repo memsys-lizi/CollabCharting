@@ -18,6 +18,16 @@ namespace CollabCharting
                 return;
             }
 
+            if (CollabRuntime.Session.IsBlockingUserInput)
+            {
+                contexts[scope] = new GuardContext
+                {
+                    Snapshot = EditorStateAdapter.EncodeCurrentLevel(),
+                    Message = "协作同步初始化中，已撤回本地修改"
+                };
+                return;
+            }
+
             if (!TryFindLockedSelection(out CollabLock? collabLock) || collabLock == null)
             {
                 return;
@@ -26,7 +36,7 @@ namespace CollabCharting
             contexts[scope] = new GuardContext
             {
                 Snapshot = EditorStateAdapter.EncodeCurrentLevel(),
-                Lock = collabLock
+                Message = $"{collabLock.OwnerName} 正在编辑，已撤回本地修改"
             };
         }
 
@@ -52,7 +62,7 @@ namespace CollabCharting
             EditorStateAdapter.ApplySnapshot(context.Snapshot, "软锁保护");
             if (ADOBase.editor != null)
             {
-                ADOBase.editor.ShowNotification($"{context.Lock.OwnerName} 正在编辑，已撤回本地修改");
+                ADOBase.editor.ShowNotification(context.Message);
             }
         }
 
@@ -106,7 +116,7 @@ namespace CollabCharting
         {
             public string Snapshot { get; set; } = string.Empty;
 
-            public CollabLock Lock { get; set; } = new CollabLock();
+            public string Message { get; set; } = string.Empty;
         }
     }
 }

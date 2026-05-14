@@ -92,6 +92,7 @@ namespace CollabCharting
                 RefreshSelectedFloorIndicators();
                 ADOBase.customLevel.ReloadAssets(force: true, reloadDecorations: false);
                 ADOBase.editor.UpdateDecorationObjects();
+                RefreshDecorationListUi();
                 RestoreSelectedFloor(selectedFloor);
                 MarkUnsaved();
                 ADOBase.editor.ShowNotification($"协作同步：{reason}");
@@ -202,6 +203,7 @@ namespace CollabCharting
                 {
                     ADOBase.customLevel.ReloadAssets(force: true, reloadDecorations: false);
                     ADOBase.editor.UpdateDecorationObjects();
+                    RefreshDecorationListUi();
                 }
 
                 RestoreSelectedFloor(selectedFloor);
@@ -224,6 +226,32 @@ namespace CollabCharting
             catch (Exception ex)
             {
                 Main.Mod?.Logger.Warning($"Failed to mark editor as unsaved: {ex.Message}");
+            }
+        }
+
+        private static void RefreshDecorationListUi()
+        {
+            try
+            {
+                if (ADOBase.editor == null || ADOBase.editor.propertyControlDecorationsList == null)
+                {
+                    return;
+                }
+
+                for (int i = ADOBase.editor.selectedDecorations.Count - 1; i >= 0; i--)
+                {
+                    if (!ADOBase.editor.levelData.decorations.Contains(ADOBase.editor.selectedDecorations[i]))
+                    {
+                        ADOBase.editor.selectedDecorations.RemoveAt(i);
+                    }
+                }
+
+                ADOBase.editor.propertyControlDecorationsList.OnDecorationUpdate();
+                ADOBase.editor.propertyControlDecorationsList.RefreshItemsList(forceRefreshAll: true);
+            }
+            catch (Exception ex)
+            {
+                Main.Mod?.Logger.Warning($"Failed to refresh decoration list after collab apply: {ex.Message}");
             }
         }
     }

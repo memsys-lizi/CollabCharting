@@ -50,6 +50,18 @@ namespace CollabCharting
 
         public bool IsWaitingForEditor => waitingForEditor;
 
+        public string SyncState => syncState;
+
+        public float SyncProgress => syncProgress;
+
+        public bool IsBlockingUserInput =>
+            InLobby &&
+            !IsHost &&
+            (waitingForEditor ||
+             syncState == "joining" ||
+             syncState == "syncing" ||
+             syncState == "queued");
+
         public void WarmupSteam()
         {
             try
@@ -149,6 +161,7 @@ namespace CollabCharting
             }
 
             syncState = "joining";
+            syncProgress = 0f;
             SteamAPICall_t call = SteamMatchmaking.JoinLobby(new CSteamID(lobby));
             joinLobbyResult = CallResult<LobbyEnter_t>.Create();
             joinLobbyResult.Set(call, OnLobbyEntered);
@@ -316,6 +329,7 @@ namespace CollabCharting
             PruneLocks();
             RefreshLocalLocks(dt);
             RetryPendingLocalOperations(dt);
+            DrainPendingOperationProposals();
             ApplyPendingPlaybackSyncIfReady();
         }
 
@@ -514,7 +528,8 @@ namespace CollabCharting
 
         private void HandleEnvelope(SteamTransport.NetEnvelope envelope)
         {
-            if (envelope.Payload == null)
+            JToken? payload = envelope.Payload;
+            if (payload == null && envelope.Type != "resource.file")
             {
                 return;
             }
@@ -530,31 +545,31 @@ namespace CollabCharting
                         }
                         break;
                     case "resource.file":
-                        HandleResourceFile(envelope.Payload);
+                        HandleResourceFile(envelope);
                         break;
                     case "level.initial":
-                        HandleInitialLevel(envelope.Payload);
+                        HandleInitialLevel(payload!);
                         break;
                     case "operation.accepted":
-                        HandleOperationAccepted(envelope.Payload);
+                        HandleOperationAccepted(payload!);
                         break;
                     case "operation.proposal":
                         HandleOperationProposal(envelope);
                         break;
                     case "operation.rejected":
-                        HandleOperationRejected(envelope.Payload);
+                        HandleOperationRejected(payload!);
                         break;
                     case "lock.update":
-                        HandleLockUpdate(envelope.Payload);
+                        HandleLockUpdate(payload!);
                         break;
                     case "lock.release":
-                        HandleLockRelease(envelope.Payload);
+                        HandleLockRelease(payload!);
                         break;
                     case "operation.undoRequest":
                         HandleHistoryRequestEnvelope(envelope);
                         break;
                     case "history.notice":
-                        HandleHistoryNotice(envelope.Payload);
+                        HandleHistoryNotice(payload!);
                         break;
                 }
             }
@@ -599,34 +614,42 @@ namespace CollabCharting
             for (int i = 0; i < manifest.Files.Count; i++)
             {
                 ResourceManifestEntry file = manifest.Files[i];
-                transport.Send(peer, "resource.file", new
+                string fullPath = ResourceSync.ResolveLevelPath(EditorStateAdapter.CurrentLevelPath, file.RelativePath);
+                transport.SendFile(peer, "resource.file", new
                 {
                     manifest.LevelRelativePath,
                     file.RelativePath,
                     file.Size,
-                    file.Sha256,
-                    Base64 = ResourceSync.ReadFileBase64(EditorStateAdapter.CurrentLevelPath, file.RelativePath)
-                }, revision);
+                    file.Sha256
+                }, fullPath, revision);
                 syncProgress = (i + 1) / (float)total;
             }
         }
 
-        private void HandleResourceFile(JToken payload)
+        private void HandleResourceFile(SteamTransport.NetEnvelope envelope)
         {
+            JToken payload = envelope.Payload ?? new JObject();
             string relativePath = payload.Value<string>("RelativePath") ?? string.Empty;
-            string base64 = payload.Value<string>("Base64") ?? string.Empty;
             string expectedSha256 = payload.Value<string>("Sha256") ?? string.Empty;
             long expectedSize = payload.Value<long?>("Size") ?? -1;
 
             byte[] bytes;
-            try
+            if (envelope.BinaryPayload != null)
             {
-                bytes = Convert.FromBase64String(base64);
+                bytes = envelope.BinaryPayload;
             }
-            catch (Exception ex)
+            else
             {
-                Main.Mod?.Logger.Warning($"Rejected malformed collab resource {relativePath}: {ex.Message}");
-                return;
+                string base64 = payload.Value<string>("Base64") ?? string.Empty;
+                try
+                {
+                    bytes = Convert.FromBase64String(base64);
+                }
+                catch (Exception ex)
+                {
+                    Main.Mod?.Logger.Warning($"Rejected malformed collab resource {relativePath}: {ex.Message}");
+                    return;
+                }
             }
 
             string actualSha256 = ResourceSync.ComputeSha256(bytes);
@@ -677,7 +700,13 @@ namespace CollabCharting
                 return;
             }
 
-            MainThreadDispatcher.Enqueue(() => EditorStateAdapter.LoadLevelFromCache(levelPath));
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                EditorStateAdapter.LoadLevelFromCache(levelPath);
+                syncState = "synced";
+                syncProgress = 1f;
+                EmitStatus();
+            });
         }
 
         private void QueueOrApplyOperation(CollabOperationBatch batch, string reason)
@@ -724,10 +753,14 @@ namespace CollabCharting
 
             if (!string.IsNullOrWhiteSpace(levelPath))
             {
-                MainThreadDispatcher.Enqueue(() => EditorStateAdapter.LoadLevelFromCache(levelPath));
-                syncState = "synced";
-                syncProgress = 1f;
-                AddEvent("预览结束，已应用排队的初始同步。");
+                MainThreadDispatcher.Enqueue(() =>
+                {
+                    EditorStateAdapter.LoadLevelFromCache(levelPath);
+                    syncState = "synced";
+                    syncProgress = 1f;
+                    AddEvent("预览结束，已应用排队的初始同步。");
+                    EmitStatus();
+                });
             }
             else if (batches.Count > 0)
             {
@@ -787,8 +820,8 @@ namespace CollabCharting
             EntityIdRegistry.InitializeFromLevelText(initial.LevelText);
             string levelPath = ResourceSync.ResolveCachePath(LobbyId, initial.LevelRelativePath);
             File.WriteAllText(levelPath, initial.LevelText);
-            syncState = "synced";
-            syncProgress = 1f;
+            syncState = "syncing";
+            syncProgress = 0.95f;
             AddEvent("初始关卡同步完成。");
             QueueOrApplyInitialLevel(levelPath);
             EmitStatus();
@@ -911,6 +944,12 @@ namespace CollabCharting
             if (!ValidateClientSequence(batch, authorId, out waitReason, out bool rejectedSequence))
             {
                 return rejectedSequence;
+            }
+
+            if (EditorPlaybackState.IsPreviewPlaying)
+            {
+                waitReason = "房主预览播放中";
+                return false;
             }
 
             CollabOperationBatch transformed = OperationDiffUtility.CloneBatch(batch);
@@ -1292,14 +1331,14 @@ namespace CollabCharting
             {
                 try
                 {
-                    transport.Send(peer, "resource.file", new
+                    string fullPath = ResourceSync.ResolveLevelPath(EditorStateAdapter.CurrentLevelPath, file.RelativePath);
+                    transport.SendFile(peer, "resource.file", new
                     {
                         LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
                         file.RelativePath,
                         file.Size,
-                        file.Sha256,
-                        Base64 = ResourceSync.ReadFileBase64(EditorStateAdapter.CurrentLevelPath, file.RelativePath)
-                    }, revision);
+                        file.Sha256
+                    }, fullPath, revision);
                 }
                 catch (Exception ex)
                 {

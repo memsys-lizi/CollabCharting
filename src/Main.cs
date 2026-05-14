@@ -47,6 +47,7 @@ namespace CollabCharting
             CollabWebCommands.Register(RegisterCommand);
             InvokeBridge("Start");
             CollabToastOverlay.Ensure();
+            CollabSyncBlockingOverlay.Ensure();
             CollabRuntime.Initialize();
             harmony = new Harmony(modEntry.Info.Id);
             harmony.PatchAll(Assembly.GetExecutingAssembly());

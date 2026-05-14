@@ -17,14 +17,21 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "SelectFloor", new[] { typeof(scrFloor), typeof(bool) })]
     internal static class EditorSelectFloorPatch
     {
-        private static bool Prefix(scrFloor floorToSelect)
+        private static bool Prefix(scrFloor floorToSelect, out bool __state)
         {
-            return EditorSelectionGuard.CanSelectFloor(floorToSelect);
+            __state = false;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
+            __state = EditorSelectionGuard.CanSelectFloor(floorToSelect);
+            return __state;
         }
 
-        private static void Postfix(scrFloor floorToSelect)
+        private static void Postfix(scrFloor floorToSelect, bool __state)
         {
-            if (floorToSelect != null)
+            if (__state && floorToSelect != null)
             {
                 CollabRuntime.AcquireSelectionLock(EditorLockTargets.Floor(floorToSelect.seqID));
             }
@@ -36,6 +43,11 @@ namespace CollabCharting
     {
         private static bool Prefix(scrFloor startFloor, scrFloor endFloor)
         {
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             return EditorSelectionGuard.CanMultiSelectFloors(startFloor, endFloor);
         }
     }
@@ -50,14 +62,21 @@ namespace CollabCharting
     })]
     internal static class EditorSelectDecorationPatch
     {
-        private static bool Prefix(LevelEvent levelEvent)
+        private static bool Prefix(LevelEvent levelEvent, out bool __state)
         {
-            return EditorSelectionGuard.CanSelectDecoration(levelEvent);
+            __state = false;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
+            __state = EditorSelectionGuard.CanSelectDecoration(levelEvent);
+            return __state;
         }
 
-        private static void Postfix(LevelEvent levelEvent)
+        private static void Postfix(LevelEvent levelEvent, bool __state)
         {
-            if (levelEvent == null)
+            if (!__state || levelEvent == null)
             {
                 return;
             }
@@ -87,14 +106,22 @@ namespace CollabCharting
     [HarmonyPatch(typeof(InspectorPanel), "ShowPanel", new[] { typeof(LevelEventType), typeof(int) })]
     internal static class InspectorPanelShowPanelPatch
     {
-        private static bool Prefix(InspectorPanel __instance, LevelEventType eventType, int eventIndex)
+        private static bool Prefix(InspectorPanel __instance, LevelEventType eventType, int eventIndex, out bool __state)
         {
-            return EditorSelectionGuard.CanShowEventPanel(__instance, eventType, eventIndex);
+            __state = false;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
+            __state = EditorSelectionGuard.CanShowEventPanel(__instance, eventType, eventIndex);
+            return __state;
         }
 
-        private static void Postfix(InspectorPanel __instance, LevelEventType eventType, int eventIndex)
+        private static void Postfix(InspectorPanel __instance, LevelEventType eventType, int eventIndex, bool __state)
         {
-            if (__instance == null ||
+            if (!__state ||
+                __instance == null ||
                 ADOBase.editor == null ||
                 __instance != ADOBase.editor.levelEventsPanel ||
                 eventType == LevelEventType.None ||
@@ -137,9 +164,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "CreateFloor", new[] { typeof(char), typeof(bool), typeof(bool) })]
     internal static class EditorCreateCharFloorPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:path.createFloor.char");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -151,9 +185,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "CreateFloor", new[] { typeof(float), typeof(bool), typeof(bool) })]
     internal static class EditorCreateFloatFloorPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:path.createFloor.float");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -165,9 +206,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "CreateFloorWithCharOrAngle", new[] { typeof(float), typeof(char), typeof(bool), typeof(bool) })]
     internal static class EditorCreateFloorWithCharOrAnglePatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:path.createFloor");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -179,9 +227,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "DeleteSingleSelection", new[] { typeof(bool) })]
     internal static class EditorDeleteSingleSelectionPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:path.deleteSingleSelection");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -193,9 +248,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "DeleteMultiSelection", new[] { typeof(bool) })]
     internal static class EditorDeleteMultiSelectionPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:path.deleteMultiSelection");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -207,9 +269,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "DeleteSubsequentFloors")]
     internal static class EditorDeleteSubsequentFloorsPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:path.deleteSubsequentFloors");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -221,9 +290,37 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "DeletePrecedingFloors")]
     internal static class EditorDeletePrecedingFloorsPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:path.deletePrecedingFloors");
+            return true;
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "AddEventAtSelected", new[] { typeof(LevelEventType) })]
+    internal static class EditorAddEventAtSelectedPatch
+    {
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
+            __state = EditorCommandCapture.Begin("command:event.addAtSelected");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -235,9 +332,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "AddDecoration", new[] { typeof(LevelEvent), typeof(int) })]
     internal static class EditorAddDecorationPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:decoration.add");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -249,9 +353,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "AddDecoration", new[] { typeof(LevelEventType), typeof(int) })]
     internal static class EditorAddDecorationTypePatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:decoration.add");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -263,9 +374,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "RemoveEvent", new[] { typeof(LevelEvent), typeof(bool) })]
     internal static class EditorRemoveEventPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:event.remove");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -277,9 +395,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "RemoveEvents", new[] { typeof(List<LevelEvent>) })]
     internal static class EditorRemoveEventsPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:event.removeMany");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -291,9 +416,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "DeleteMultiSelectionDecorations")]
     internal static class EditorDeleteMultiSelectionDecorationsPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:decoration.deleteMultiSelection");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -305,18 +437,31 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "DragDecorationsStart")]
     internal static class EditorDragDecorationsStartPatch
     {
-        private static void Prefix()
+        private static bool Prefix()
         {
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             EditorCommandCapture.BeginDecorationDrag();
+            return true;
         }
     }
 
     [HarmonyPatch(typeof(PropertyControl_DecorationsList), "OnItemDropMiddle")]
     internal static class DecorationsListDropMiddlePatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:decoration.reorder");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
@@ -328,9 +473,16 @@ namespace CollabCharting
     [HarmonyPatch(typeof(PropertyControl_DecorationsList), "OnItemDropSides")]
     internal static class DecorationsListDropSidesPatch
     {
-        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        private static bool Prefix(out EditorCommandCapture.CommandScope __state)
         {
+            __state = null!;
+            if (EditorInputBlocker.ShouldBlockEditorAction())
+            {
+                return false;
+            }
+
             __state = EditorCommandCapture.Begin("command:decoration.reorder");
+            return true;
         }
 
         private static void Postfix(EditorCommandCapture.CommandScope __state)
