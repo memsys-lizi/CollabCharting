@@ -30,6 +30,7 @@ namespace CollabCharting
         private string syncState = "idle";
         private float syncProgress;
         private float lockHeartbeatTimer;
+        private float pendingOperationResendTimer;
         private long nextClientSeq;
         private readonly List<CollabOperationBatch> pendingPlaybackOperations = new List<CollabOperationBatch>();
         private string pendingPlaybackReason = string.Empty;
@@ -314,6 +315,7 @@ namespace CollabCharting
 
             PruneLocks();
             RefreshLocalLocks(dt);
+            RetryPendingLocalOperations(dt);
             ApplyPendingPlaybackSyncIfReady();
         }
 
@@ -355,7 +357,7 @@ namespace CollabCharting
                 BroadcastRequiredResources(batch);
                 Broadcast("operation.accepted", batch);
                 AddEvent($"{localName} 修改了谱面 r{revision}（{DescribeBatch(batch)}）。", localId, localName);
-                Main.Mod?.Logger.Log($"Accepted local host operation r{revision}: {DescribeBatch(batch)}");
+                Main.Mod?.Logger.Log($"Accepted local host operation r{revision} seq {batch.ClientSeq}: {DescribeBatch(batch)}");
                 EmitStatus();
             }
             else
@@ -365,7 +367,7 @@ namespace CollabCharting
                 SendRequiredResources(host, batch);
                 transport.Send(host, "operation.proposal", batch, revision);
                 AddEvent($"已向房主提交本地操作（{DescribeBatch(batch)}）。", localId, localName);
-                Main.Mod?.Logger.Log($"Sent operation proposal to host: {DescribeBatch(batch)} / base r{revision}");
+                Main.Mod?.Logger.Log($"Sent operation proposal to host seq {batch.ClientSeq}: {DescribeBatch(batch)} / base r{revision}");
                 EmitStatus();
             }
         }
@@ -456,6 +458,44 @@ namespace CollabCharting
             if (!InLobby || update.m_ulSteamIDLobby != lobbyId.m_SteamID)
             {
                 return;
+            }
+
+            var changedUser = new CSteamID(update.m_ulSteamIDUserChanged);
+            string changedId = changedUser.m_SteamID.ToString();
+            string changedName = SteamFriends.GetFriendPersonaName(changedUser);
+            var state = (EChatMemberStateChange)update.m_rgfChatMemberStateChange;
+            bool left =
+                (state & EChatMemberStateChange.k_EChatMemberStateChangeLeft) != 0 ||
+                (state & EChatMemberStateChange.k_EChatMemberStateChangeDisconnected) != 0 ||
+                (state & EChatMemberStateChange.k_EChatMemberStateChangeKicked) != 0 ||
+                (state & EChatMemberStateChange.k_EChatMemberStateChangeBanned) != 0;
+
+            if ((state & EChatMemberStateChange.k_EChatMemberStateChangeEntered) != 0)
+            {
+                AddEvent($"{changedName} 加入了协作房间。", changedId, changedName);
+            }
+
+            if (left)
+            {
+                RemoveLocksForOwner(changedId);
+                pendingOperationProposals.RemoveAll(item => string.Equals(item.AuthorId, changedId, StringComparison.Ordinal));
+                lastClientSeqByAuthor.Remove(changedId);
+                AddEvent($"{changedName} 已离开协作房间。", changedId, changedName);
+
+                string hostId = SteamMatchmaking.GetLobbyData(lobbyId, "hostSteamId");
+                string localId = SteamUser.GetSteamID().m_SteamID.ToString();
+                if (!string.IsNullOrWhiteSpace(hostId) &&
+                    string.Equals(changedId, hostId, StringComparison.Ordinal) &&
+                    !string.Equals(changedId, localId, StringComparison.Ordinal))
+                {
+                    if (ADOBase.editor != null)
+                    {
+                        ADOBase.editor.ShowNotification("房主已离开，协作结束");
+                    }
+
+                    LeaveLobby();
+                    return;
+                }
             }
 
             EmitStatus();
@@ -825,7 +865,18 @@ namespace CollabCharting
                 : "成员";
             batch.AuthorSteamId = authorId;
             batch.AuthorName = string.IsNullOrWhiteSpace(batch.AuthorName) ? authorName : batch.AuthorName;
-            Main.Mod?.Logger.Log($"Received operation proposal from {authorName}: {DescribeBatch(batch)} / base r{batch.BaseRevision}");
+            Main.Mod?.Logger.Log($"Received operation proposal from {authorName} seq {batch.ClientSeq} ({ShortId(batch.OperationId)}): {DescribeBatch(batch)} / base r{batch.BaseRevision}");
+
+            if (TryFindAcceptedOperation(batch.OperationId, out CollabOperationBatch? accepted) && accepted != null)
+            {
+                if (ulong.TryParse(authorId, out ulong duplicatePeer))
+                {
+                    transport.Send(new CSteamID(duplicatePeer), "operation.accepted", accepted, revision);
+                    Main.Mod?.Logger.Log($"Replayed accepted operation {ShortId(batch.OperationId)} to {authorName}.");
+                }
+
+                return;
+            }
 
             var proposal = new PendingOperationProposal
             {
@@ -867,6 +918,7 @@ namespace CollabCharting
             {
                 Main.Mod?.Logger.Warning($"Rejected operation transform from {authorName}: {transformConflict}");
                 RejectOperation(authorId, transformed.OperationId, transformConflict);
+                MarkClientSequenceConsumed(authorId, batch.ClientSeq);
                 return true;
             }
 
@@ -874,6 +926,7 @@ namespace CollabCharting
             {
                 Main.Mod?.Logger.Warning($"Rejected operation lock from {authorName}: {lockConflict}");
                 RejectOperation(authorId, transformed.OperationId, lockConflict);
+                MarkClientSequenceConsumed(authorId, batch.ClientSeq);
                 return true;
             }
 
@@ -881,6 +934,7 @@ namespace CollabCharting
             {
                 Main.Mod?.Logger.Warning($"Rejected operation apply from {authorName}: {conflict}");
                 RejectOperation(authorId, transformed.OperationId, conflict);
+                MarkClientSequenceConsumed(authorId, batch.ClientSeq);
                 return true;
             }
 
@@ -889,16 +943,13 @@ namespace CollabCharting
             transformed.ClientSeq = batch.ClientSeq;
             transformed.AuthorSteamId = authorId;
             transformed.AuthorName = authorName;
-            if (batch.ClientSeq > 0)
-            {
-                lastClientSeqByAuthor[authorId] = batch.ClientSeq;
-            }
+            MarkClientSequenceConsumed(authorId, batch.ClientSeq);
 
             RecordOperation(transformed);
             BroadcastRequiredResources(transformed, authorId);
             Broadcast("operation.accepted", transformed);
             AddEvent($"{authorName} 的操作已同步 r{revision}（{DescribeBatch(transformed)}）。", authorId, authorName);
-            Main.Mod?.Logger.Log($"Accepted peer operation from {authorName} r{revision}: {DescribeBatch(transformed)}");
+            Main.Mod?.Logger.Log($"Accepted peer operation from {authorName} r{revision} seq {batch.ClientSeq}: {DescribeBatch(transformed)}");
             EmitStatus();
             return true;
         }
@@ -912,7 +963,7 @@ namespace CollabCharting
             }
 
             pendingOperationProposals.Add(proposal);
-            Main.Mod?.Logger.Log($"Queued operation proposal {proposal.Batch.OperationId} from {proposal.AuthorName}: {reason}");
+            Main.Mod?.Logger.Log($"Queued operation proposal {ShortId(proposal.Batch.OperationId)} seq {proposal.Batch.ClientSeq} from {proposal.AuthorName}: {reason}");
             AddEvent($"{proposal.AuthorName} 的操作正在等待同步条件（{reason}）。", proposal.AuthorId, proposal.AuthorName);
             EmitStatus();
         }
@@ -942,6 +993,29 @@ namespace CollabCharting
                 }
             }
             while (progressed);
+        }
+
+        private void RetryPendingLocalOperations(float dt)
+        {
+            if (!InLobby || IsHost || pendingLocalOperations.Count == 0)
+            {
+                pendingOperationResendTimer = 0f;
+                return;
+            }
+
+            pendingOperationResendTimer += dt;
+            if (pendingOperationResendTimer < 2.5f)
+            {
+                return;
+            }
+
+            pendingOperationResendTimer = 0f;
+            CSteamID host = SteamMatchmaking.GetLobbyOwner(lobbyId);
+            foreach (CollabOperationBatch batch in new List<CollabOperationBatch>(pendingLocalOperations.Values))
+            {
+                transport.Send(host, "operation.proposal", batch, revision);
+                Main.Mod?.Logger.Log($"Retried operation proposal seq {batch.ClientSeq} ({ShortId(batch.OperationId)}) to host.");
+            }
         }
 
         private void HandleOperationRejected(JToken payload)
@@ -1028,13 +1102,22 @@ namespace CollabCharting
         {
             if (op.Target.Domain == "event")
             {
+                if (!string.IsNullOrWhiteSpace(op.Target.EntityId))
+                {
+                    yield return EditorLockTargets.EventIdPrefix + op.Target.EntityId;
+                }
+
                 yield return $"event:{op.Target.Floor}:{op.Target.EventType}:{op.Target.Index}";
                 yield return $"floor:{op.Target.Floor}";
             }
             else if (op.Target.Domain == "decoration")
             {
+                if (!string.IsNullOrWhiteSpace(op.Target.EntityId))
+                {
+                    yield return EditorLockTargets.DecorationIdPrefix + op.Target.EntityId;
+                }
+
                 yield return $"decoration:{op.Target.Index}";
-                yield return op.Target.EntityId;
             }
             else if (op.Target.Domain == "path" && op.Target.Index >= 0)
             {
@@ -1045,6 +1128,50 @@ namespace CollabCharting
         private static string DescribeBatch(CollabOperationBatch batch)
         {
             return OperationDiffUtility.DescribeBatch(batch);
+        }
+
+        private bool TryFindAcceptedOperation(string operationId, out CollabOperationBatch? accepted)
+        {
+            accepted = null;
+            if (string.IsNullOrWhiteSpace(operationId))
+            {
+                return false;
+            }
+
+            foreach (CollabOperationBatch batch in operationLog)
+            {
+                if (string.Equals(batch.OperationId, operationId, StringComparison.Ordinal))
+                {
+                    accepted = batch;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void MarkClientSequenceConsumed(string authorId, long clientSeq)
+        {
+            if (clientSeq <= 0 || string.IsNullOrWhiteSpace(authorId))
+            {
+                return;
+            }
+
+            lastClientSeqByAuthor.TryGetValue(authorId, out long lastSeq);
+            if (clientSeq > lastSeq)
+            {
+                lastClientSeqByAuthor[authorId] = clientSeq;
+            }
+        }
+
+        private static string ShortId(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return "-";
+            }
+
+            return id.Length <= 8 ? id : id.Substring(0, 8);
         }
 
         private static bool AttachRequiredFiles(CollabOperationBatch batch, out string error)
@@ -1240,6 +1367,28 @@ namespace CollabCharting
             foreach (string key in expired)
             {
                 locks.Remove(key);
+            }
+        }
+
+        private void RemoveLocksForOwner(string ownerSteamId)
+        {
+            if (string.IsNullOrWhiteSpace(ownerSteamId))
+            {
+                return;
+            }
+
+            var release = new List<string>();
+            foreach (KeyValuePair<string, CollabLock> pair in locks)
+            {
+                if (string.Equals(pair.Value.OwnerSteamId, ownerSteamId, StringComparison.Ordinal))
+                {
+                    release.Add(pair.Key);
+                }
+            }
+
+            foreach (string target in release)
+            {
+                locks.Remove(target);
             }
         }
 

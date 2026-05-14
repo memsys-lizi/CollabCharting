@@ -17,12 +17,26 @@ namespace CollabCharting
     [HarmonyPatch(typeof(scnEditor), "SelectFloor", new[] { typeof(scrFloor), typeof(bool) })]
     internal static class EditorSelectFloorPatch
     {
+        private static bool Prefix(scrFloor floorToSelect)
+        {
+            return EditorSelectionGuard.CanSelectFloor(floorToSelect);
+        }
+
         private static void Postfix(scrFloor floorToSelect)
         {
             if (floorToSelect != null)
             {
-                CollabRuntime.AcquireSelectionLock($"floor:{floorToSelect.seqID}");
+                CollabRuntime.AcquireSelectionLock(EditorLockTargets.Floor(floorToSelect.seqID));
             }
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "MultiSelectFloors", new[] { typeof(scrFloor), typeof(scrFloor), typeof(bool) })]
+    internal static class EditorMultiSelectFloorsPatch
+    {
+        private static bool Prefix(scrFloor startFloor, scrFloor endFloor)
+        {
+            return EditorSelectionGuard.CanMultiSelectFloors(startFloor, endFloor);
         }
     }
 
@@ -36,6 +50,11 @@ namespace CollabCharting
     })]
     internal static class EditorSelectDecorationPatch
     {
+        private static bool Prefix(LevelEvent levelEvent)
+        {
+            return EditorSelectionGuard.CanSelectDecoration(levelEvent);
+        }
+
         private static void Postfix(LevelEvent levelEvent)
         {
             if (levelEvent == null)
@@ -43,9 +62,7 @@ namespace CollabCharting
                 return;
             }
 
-            int index = scrDecorationManager.GetDecorationIndex(levelEvent);
-            string id = index >= 0 ? index.ToString() : $"{levelEvent.eventType}:{levelEvent.floor}";
-            CollabRuntime.AcquireSelectionLock($"decoration:{id}");
+            CollabRuntime.AcquireSelectionLock(EditorLockTargets.Decoration(levelEvent));
         }
     }
 
@@ -70,6 +87,11 @@ namespace CollabCharting
     [HarmonyPatch(typeof(InspectorPanel), "ShowPanel", new[] { typeof(LevelEventType), typeof(int) })]
     internal static class InspectorPanelShowPanelPatch
     {
+        private static bool Prefix(InspectorPanel __instance, LevelEventType eventType, int eventIndex)
+        {
+            return EditorSelectionGuard.CanShowEventPanel(__instance, eventType, eventIndex);
+        }
+
         private static void Postfix(InspectorPanel __instance, LevelEventType eventType, int eventIndex)
         {
             if (__instance == null ||
@@ -82,7 +104,7 @@ namespace CollabCharting
             }
 
             int floor = ADOBase.editor.selectedFloors[0].seqID;
-            CollabRuntime.AcquireSelectionLock($"event:{floor}:{eventType}:{eventIndex}");
+            CollabRuntime.AcquireSelectionLock(EditorLockTargets.Event(floor, eventType, eventIndex));
         }
     }
 

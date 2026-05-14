@@ -9,6 +9,7 @@ namespace CollabCharting
         private static float editorMissingSeconds;
         private static float selectionLockRefreshSeconds;
         private static string lastSelectionLockTarget = string.Empty;
+        private static string activeSelectionLockTarget = string.Empty;
 
         public static SteamSessionManager Session { get; } = new SteamSessionManager();
 
@@ -63,20 +64,22 @@ namespace CollabCharting
             Session.Dispose();
         }
 
-        public static void AcquireSelectionLock(string target)
+        public static bool AcquireSelectionLock(string target)
         {
             if (!Session.InLobby || string.IsNullOrWhiteSpace(target) || IsApplyingRemote)
             {
-                return;
+                return false;
             }
 
             try
             {
-                Session.AcquireLock(target);
+                object result = Session.AcquireLock(target);
+                return result is CollabLock collabLock && Session.IsLocalLock(collabLock);
             }
             catch (Exception ex)
             {
                 Main.Mod?.Logger.Warning($"Acquire collab lock failed: {ex.Message}");
+                return false;
             }
         }
 
@@ -105,6 +108,7 @@ namespace CollabCharting
             {
                 selectionLockRefreshSeconds = 0f;
                 lastSelectionLockTarget = string.Empty;
+                activeSelectionLockTarget = string.Empty;
                 return;
             }
 
@@ -113,6 +117,7 @@ namespace CollabCharting
             {
                 selectionLockRefreshSeconds = 0f;
                 lastSelectionLockTarget = string.Empty;
+                ReleaseActiveSelectionLock();
                 return;
             }
 
@@ -125,7 +130,10 @@ namespace CollabCharting
 
             lastSelectionLockTarget = target;
             selectionLockRefreshSeconds = 0f;
-            AcquireSelectionLock(target);
+            if (AcquireSelectionLock(target))
+            {
+                activeSelectionLockTarget = target;
+            }
         }
 
         private static string GetCurrentSelectionLockTarget()
@@ -136,7 +144,7 @@ namespace CollabCharting
                 int index = scrDecorationManager.GetDecorationIndex(editor.selectedDecorations[0]);
                 if (index >= 0)
                 {
-                    return $"decoration:{index}";
+                    return EditorLockTargets.Decoration(editor.selectedDecorations[0]);
                 }
             }
 
@@ -147,15 +155,37 @@ namespace CollabCharting
                 int floor = editor.selectedFloors[0].seqID;
                 ADOFAI.LevelEventType eventType = editor.levelEventsPanel.selectedEventType;
                 int index = editor.levelEventsPanel.EventNumOfTab(eventType);
-                return $"event:{floor}:{eventType}:{index}";
+                return EditorLockTargets.Event(floor, eventType, index);
             }
 
             if (!editor.SelectionIsEmpty())
             {
-                return $"floor:{editor.selectedFloors[0].seqID}";
+                return EditorLockTargets.Floor(editor.selectedFloors[0].seqID);
             }
 
             return string.Empty;
+        }
+
+        private static void ReleaseActiveSelectionLock()
+        {
+            if (string.IsNullOrWhiteSpace(activeSelectionLockTarget) || !Session.InLobby || IsApplyingRemote)
+            {
+                activeSelectionLockTarget = string.Empty;
+                return;
+            }
+
+            try
+            {
+                Session.ReleaseLock(activeSelectionLockTarget);
+            }
+            catch (Exception ex)
+            {
+                Main.Mod?.Logger.Warning($"Release collab selection lock failed: {ex.Message}");
+            }
+            finally
+            {
+                activeSelectionLockTarget = string.Empty;
+            }
         }
 
         private static void EnforceEditorLifecycle(float dt)

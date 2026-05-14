@@ -148,6 +148,35 @@ namespace CollabCharting
                 return TryFloorPosition(floorId, 1.05f, out position);
             }
 
+            if (target.StartsWith(EditorLockTargets.EventIdPrefix, StringComparison.Ordinal))
+            {
+                string id = target.Substring(EditorLockTargets.EventIdPrefix.Length);
+                if (!EntityIdRegistry.TryGetEntityInfo("event", id, out _, out floorId, out _))
+                {
+                    return false;
+                }
+
+                return TryFloorPosition(floorId, 1.05f, out position);
+            }
+
+            if (target.StartsWith(EditorLockTargets.DecorationIdPrefix, StringComparison.Ordinal))
+            {
+                string id = target.Substring(EditorLockTargets.DecorationIdPrefix.Length);
+                if (!EntityIdRegistry.TryGetEntityInfo("decoration", id, out int index, out _, out _))
+                {
+                    return false;
+                }
+
+                scrDecoration decoration = scrDecorationManager.GetDecoration(index);
+                if (decoration == null)
+                {
+                    return false;
+                }
+
+                position = decoration.transform.position + new Vector3(0f, 0.8f, -1f);
+                return true;
+            }
+
             if (target.StartsWith("decoration:", StringComparison.Ordinal))
             {
                 string id = target.Substring("decoration:".Length);
@@ -189,12 +218,14 @@ namespace CollabCharting
 
         private static string GetLocalLabel(string target)
         {
-            if (target.StartsWith("event:", StringComparison.Ordinal))
+            if (target.StartsWith("event:", StringComparison.Ordinal) ||
+                target.StartsWith(EditorLockTargets.EventIdPrefix, StringComparison.Ordinal))
             {
                 return "你正在编辑事件";
             }
 
-            if (target.StartsWith("decoration:", StringComparison.Ordinal))
+            if (target.StartsWith("decoration:", StringComparison.Ordinal) ||
+                target.StartsWith(EditorLockTargets.DecorationIdPrefix, StringComparison.Ordinal))
             {
                 return "你正在编辑装饰";
             }

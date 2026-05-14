@@ -83,6 +83,76 @@ namespace CollabCharting
             return -1;
         }
 
+        public static bool TryGetEntityId(string domain, int index, out string entityId)
+        {
+            entityId = string.Empty;
+            List<EntityRecord> domainRecords = GetDomain(domain);
+            if (index < 0 || index >= domainRecords.Count)
+            {
+                return false;
+            }
+
+            entityId = domainRecords[index].Id;
+            return !string.IsNullOrWhiteSpace(entityId);
+        }
+
+        public static bool TryGetEventEntityId(int floor, string eventType, int occurrence, out string entityId)
+        {
+            entityId = string.Empty;
+            if (floor < 0 || string.IsNullOrWhiteSpace(eventType) || occurrence < 0)
+            {
+                return false;
+            }
+
+            int seen = 0;
+            foreach (EntityRecord record in GetDomain("event"))
+            {
+                if (record.Floor != floor ||
+                    !string.Equals(record.EventType, eventType, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (seen == occurrence)
+                {
+                    entityId = record.Id;
+                    return !string.IsNullOrWhiteSpace(entityId);
+                }
+
+                seen++;
+            }
+
+            return false;
+        }
+
+        public static bool TryGetEntityInfo(string domain, string entityId, out int index, out int floor, out string eventType)
+        {
+            index = -1;
+            floor = -1;
+            eventType = string.Empty;
+            if (string.IsNullOrWhiteSpace(entityId))
+            {
+                return false;
+            }
+
+            List<EntityRecord> domainRecords = GetDomain(domain);
+            for (int i = 0; i < domainRecords.Count; i++)
+            {
+                EntityRecord record = domainRecords[i];
+                if (!string.Equals(record.Id, entityId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                index = i;
+                floor = record.Floor;
+                eventType = record.EventType;
+                return true;
+            }
+
+            return false;
+        }
+
         public static void ApplyBatch(CollabOperationBatch batch, JObject root)
         {
             if (batch == null || root == null)

@@ -411,19 +411,36 @@ namespace CollabCharting
                 return false;
             }
 
-            if (!TryDecodeLevelEvent(afterItem, out LevelEvent decoded, out conflict))
-            {
-                return false;
-            }
-
             IList<LevelEvent> list = GetEventList(arrayName);
             if (index < 0 || index >= list.Count)
             {
+                if (!TryDecodeLevelEvent(afterItem, out LevelEvent inserted, out conflict))
+                {
+                    return false;
+                }
+
                 int insertIndex = Math.Min(Math.Max(preferredIndex, 0), list.Count);
-                list.Insert(insertIndex, decoded);
+                list.Insert(insertIndex, inserted);
             }
             else
             {
+                if (!(array[index] is JObject currentItem))
+                {
+                    conflict = "目标对象数据无法解析";
+                    return false;
+                }
+
+                JObject merged = (JObject)currentItem.DeepClone();
+                if (!ApplyPropertyChanges(merged, payload, out conflict))
+                {
+                    return false;
+                }
+
+                if (!TryDecodeLevelEvent(merged, out LevelEvent decoded, out conflict))
+                {
+                    return false;
+                }
+
                 CopyLevelEvent(decoded, list[index]);
             }
 
@@ -648,7 +665,6 @@ namespace CollabCharting
                 return false;
             }
 
-            JToken? oldValue = payload["oldValue"];
             JToken? newValue = payload["newValue"];
             if (mode == "char")
             {
@@ -656,12 +672,6 @@ namespace CollabCharting
                 if (index >= pathData.Length)
                 {
                     conflict = "轨道修改位置超出当前谱面";
-                    return false;
-                }
-
-                if (oldValue != null && pathData[index].ToString() != oldValue.Value<string>())
-                {
-                    conflict = $"轨道 {index} 已被其他玩家修改";
                     return false;
                 }
 
@@ -685,12 +695,6 @@ namespace CollabCharting
                 return false;
             }
 
-            if (oldValue != null && !JToken.DeepEquals(angles[index], oldValue))
-            {
-                conflict = $"轨道 {index} 已被其他玩家修改";
-                return false;
-            }
-
             angles[index] = newValue?.DeepClone() ?? JValue.CreateNull();
             return true;
         }
@@ -699,7 +703,6 @@ namespace CollabCharting
         {
             conflict = string.Empty;
             string mode = payload.Value<string>("mode") ?? "angle";
-            JToken? oldValue = payload["oldValue"];
             JToken? newValue = payload["newValue"];
             if (newValue == null)
             {
@@ -709,22 +712,8 @@ namespace CollabCharting
 
             if (mode == "char")
             {
-                string current = root.Value<string>("pathData") ?? string.Empty;
-                if (oldValue != null && oldValue.Type == JTokenType.String && current != oldValue.Value<string>())
-                {
-                    conflict = "轨道结构已被其他玩家修改";
-                    return false;
-                }
-
                 root["pathData"] = newValue.Value<string>() ?? string.Empty;
                 return true;
-            }
-
-            JArray currentAngles = EnsureArray(root, "angleData");
-            if (oldValue is JArray oldAngles && !JToken.DeepEquals(currentAngles, oldAngles))
-            {
-                conflict = "轨道结构已被其他玩家修改";
-                return false;
             }
 
             if (!(newValue is JArray newAngles))
@@ -778,12 +767,6 @@ namespace CollabCharting
                 return true;
             }
 
-            if (item != null && OperationDiffUtility.HashToken(array[index]) != OperationDiffUtility.HashToken(item))
-            {
-                conflict = "目标对象已被其他玩家修改，无法删除";
-                return false;
-            }
-
             array.RemoveAt(index);
             return true;
         }
@@ -828,24 +811,6 @@ namespace CollabCharting
         {
             conflict = string.Empty;
             List<CollabPropertyChange> changes = payload["changes"]?.ToObject<List<CollabPropertyChange>>() ?? new List<CollabPropertyChange>();
-            foreach (CollabPropertyChange change in changes)
-            {
-                JProperty? property = target.Property(change.Path);
-                if (change.OldExists)
-                {
-                    if (property == null || !JToken.DeepEquals(property.Value, change.OldValue))
-                    {
-                        conflict = $"属性 {change.Path} 已被其他玩家修改";
-                        return false;
-                    }
-                }
-                else if (property != null)
-                {
-                    conflict = $"属性 {change.Path} 已被其他玩家新增";
-                    return false;
-                }
-            }
-
             foreach (CollabPropertyChange change in changes)
             {
                 if (change.NewExists)

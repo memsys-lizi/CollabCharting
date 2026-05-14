@@ -66,7 +66,7 @@ namespace CollabCharting
 
             foreach (scrFloor floor in ADOBase.editor.selectedFloors)
             {
-                if (floor != null && CollabRuntime.Session.TryGetRemoteLock($"floor:{floor.seqID}", out collabLock))
+                if (floor != null && CollabRuntime.Session.TryGetRemoteLock(EditorLockTargets.Floor(floor.seqID), out collabLock))
                 {
                     return true;
                 }
@@ -79,9 +79,7 @@ namespace CollabCharting
                     continue;
                 }
 
-                int index = scrDecorationManager.GetDecorationIndex(decoration);
-                string id = index >= 0 ? index.ToString() : $"{decoration.eventType}:{decoration.floor}";
-                if (CollabRuntime.Session.TryGetRemoteLock($"decoration:{id}", out collabLock))
+                if (CollabRuntime.Session.TryGetRemoteLock(EditorLockTargets.Decoration(decoration), out collabLock))
                 {
                     return true;
                 }
@@ -94,7 +92,8 @@ namespace CollabCharting
                 int floor = ADOBase.editor.selectedFloors[0].seqID;
                 LevelEventType eventType = ADOBase.editor.levelEventsPanel.selectedEventType;
                 int index = ADOBase.editor.levelEventsPanel.EventNumOfTab(eventType);
-                if (CollabRuntime.Session.TryGetRemoteLock($"event:{floor}:{eventType}:{index}", out collabLock))
+                if (CollabRuntime.Session.TryGetRemoteLock(EditorLockTargets.Event(floor, eventType, index), out collabLock) ||
+                    CollabRuntime.Session.TryGetRemoteLock(EditorLockTargets.Floor(floor), out collabLock))
                 {
                     return true;
                 }
