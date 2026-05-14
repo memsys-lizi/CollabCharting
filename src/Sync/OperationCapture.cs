@@ -19,6 +19,12 @@ namespace CollabCharting
             depth = 0;
         }
 
+        public static void CancelActiveScope()
+        {
+            rootScope = null;
+            rootBefore = string.Empty;
+        }
+
         public static void Update(float dt)
         {
             if (!CollabRuntime.Session.InLobby ||
@@ -30,8 +36,13 @@ namespace CollabCharting
                 return;
             }
 
-            if (EditorPlaybackState.IsPreviewPlaying || depth > 0 || rootScope != null)
+            if (EditorPlaybackState.IsPreviewPlaying ||
+                EditorCommandCapture.IsCapturingCommand ||
+                depth > 0 ||
+                rootScope != null)
             {
+                baseline = string.Empty;
+                pollTimer = 0f;
                 return;
             }
 
@@ -54,7 +65,8 @@ namespace CollabCharting
                 return;
             }
 
-            PublishDiff(baseline, current, "local-edit-poll");
+            Main.Mod?.Logger.Warning("Missed editor command capture; level changed outside command patches.");
+            baseline = current;
         }
 
         public static void Begin(SaveStateScope scope, bool dataHasChanged)
@@ -64,6 +76,7 @@ namespace CollabCharting
                 depth < 0 ||
                 !CollabRuntime.Session.InLobby ||
                 CollabRuntime.IsApplyingRemote ||
+                EditorCommandCapture.IsCapturingCommand ||
                 EditorPlaybackState.IsPreviewPlaying ||
                 !EditorStateAdapter.IsEditorReady)
             {
@@ -98,6 +111,7 @@ namespace CollabCharting
 
             if (!CollabRuntime.Session.InLobby ||
                 CollabRuntime.IsApplyingRemote ||
+                EditorCommandCapture.IsCapturingCommand ||
                 EditorPlaybackState.IsPreviewPlaying ||
                 !EditorStateAdapter.IsEditorReady)
             {

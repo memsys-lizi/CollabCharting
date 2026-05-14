@@ -117,6 +117,8 @@ namespace CollabCharting
 
         public int Revision { get; set; }
 
+        public long ClientSeq { get; set; }
+
         public string AuthorSteamId { get; set; } = string.Empty;
 
         public string AuthorName { get; set; } = string.Empty;

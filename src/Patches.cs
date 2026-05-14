@@ -1,6 +1,8 @@
 namespace CollabCharting
 {
+    using System.Collections.Generic;
     using ADOFAI;
+    using ADOFAI.LevelEditor.Controls;
     using HarmonyLib;
 
     [HarmonyPatch(typeof(scnEditor), "Start")]
@@ -107,6 +109,211 @@ namespace CollabCharting
         {
             EditGuard.End(__instance);
             OperationCapture.End(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "CreateFloor", new[] { typeof(char), typeof(bool), typeof(bool) })]
+    internal static class EditorCreateCharFloorPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:path.createFloor.char");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "CreateFloor", new[] { typeof(float), typeof(bool), typeof(bool) })]
+    internal static class EditorCreateFloatFloorPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:path.createFloor.float");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "CreateFloorWithCharOrAngle", new[] { typeof(float), typeof(char), typeof(bool), typeof(bool) })]
+    internal static class EditorCreateFloorWithCharOrAnglePatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:path.createFloor");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "DeleteSingleSelection", new[] { typeof(bool) })]
+    internal static class EditorDeleteSingleSelectionPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:path.deleteSingleSelection");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "DeleteMultiSelection", new[] { typeof(bool) })]
+    internal static class EditorDeleteMultiSelectionPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:path.deleteMultiSelection");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "DeleteSubsequentFloors")]
+    internal static class EditorDeleteSubsequentFloorsPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:path.deleteSubsequentFloors");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "DeletePrecedingFloors")]
+    internal static class EditorDeletePrecedingFloorsPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:path.deletePrecedingFloors");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "AddDecoration", new[] { typeof(LevelEvent), typeof(int) })]
+    internal static class EditorAddDecorationPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:decoration.add");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "AddDecoration", new[] { typeof(LevelEventType), typeof(int) })]
+    internal static class EditorAddDecorationTypePatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:decoration.add");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "RemoveEvent", new[] { typeof(LevelEvent), typeof(bool) })]
+    internal static class EditorRemoveEventPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:event.remove");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "RemoveEvents", new[] { typeof(List<LevelEvent>) })]
+    internal static class EditorRemoveEventsPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:event.removeMany");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "DeleteMultiSelectionDecorations")]
+    internal static class EditorDeleteMultiSelectionDecorationsPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:decoration.deleteMultiSelection");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "DragDecorationsStart")]
+    internal static class EditorDragDecorationsStartPatch
+    {
+        private static void Prefix()
+        {
+            EditorCommandCapture.BeginDecorationDrag();
+        }
+    }
+
+    [HarmonyPatch(typeof(PropertyControl_DecorationsList), "OnItemDropMiddle")]
+    internal static class DecorationsListDropMiddlePatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:decoration.reorder");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
+        }
+    }
+
+    [HarmonyPatch(typeof(PropertyControl_DecorationsList), "OnItemDropSides")]
+    internal static class DecorationsListDropSidesPatch
+    {
+        private static void Prefix(out EditorCommandCapture.CommandScope __state)
+        {
+            __state = EditorCommandCapture.Begin("command:decoration.reorder");
+        }
+
+        private static void Postfix(EditorCommandCapture.CommandScope __state)
+        {
+            EditorCommandCapture.End(__state);
         }
     }
 }

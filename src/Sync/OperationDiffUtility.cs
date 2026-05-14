@@ -89,6 +89,7 @@ namespace CollabCharting
                 OperationId = source.OperationId,
                 BaseRevision = source.BaseRevision,
                 Revision = source.Revision,
+                ClientSeq = source.ClientSeq,
                 AuthorSteamId = source.AuthorSteamId,
                 AuthorName = source.AuthorName,
                 Reason = source.Reason,
@@ -215,21 +216,21 @@ namespace CollabCharting
 
         private static void AddArrayPathOperations(JArray before, JArray after, string mode, CollabOperationBatch batch)
         {
-            if (TryFindSingleInsert(before, after, out int insertIndex))
+            if (TryFindContiguousInsert(before, after, out int insertIndex, out JArray inserted))
             {
                 AddOperation(batch, "path.insertFloor", Target("path", "angleData", -1, string.Empty, insertIndex),
                     new JObject
                     {
                         ["mode"] = mode,
                         ["index"] = insertIndex,
-                        ["value"] = after[insertIndex]?.DeepClone()
+                        ["values"] = inserted.DeepClone()
                     },
                     new JObject
                     {
                         ["mode"] = mode,
                         ["index"] = insertIndex,
-                        ["count"] = 1,
-                        ["values"] = new JArray((after[insertIndex] ?? JValue.CreateNull()).DeepClone())
+                        ["count"] = inserted.Count,
+                        ["values"] = inserted.DeepClone()
                     },
                     before);
                 return;
@@ -287,26 +288,29 @@ namespace CollabCharting
                     before[i]);
             }
 
-            AddPathReplaceAll(batch, mode, before, after);
+            if (before.Count != after.Count)
+            {
+                AddPathReplaceAll(batch, mode, before, after);
+            }
         }
 
         private static void AddStringPathOperations(string before, string after, CollabOperationBatch batch)
         {
-            if (after.Length == before.Length + 1 && TryFindStringInsert(before, after, out int insertIndex))
+            if (TryFindStringInsert(before, after, out int insertIndex, out string inserted))
             {
                 AddOperation(batch, "path.insertFloor", Target("path", "pathData", -1, string.Empty, insertIndex),
                     new JObject
                     {
                         ["mode"] = "char",
                         ["index"] = insertIndex,
-                        ["value"] = after[insertIndex].ToString()
+                        ["values"] = inserted
                     },
                     new JObject
                     {
                         ["mode"] = "char",
                         ["index"] = insertIndex,
-                        ["count"] = 1,
-                        ["values"] = new JArray(after[insertIndex].ToString())
+                        ["count"] = inserted.Length,
+                        ["values"] = inserted
                     },
                     new JValue(before));
                 return;
@@ -359,7 +363,10 @@ namespace CollabCharting
                     new JValue(before[i].ToString()));
             }
 
-            AddPathReplaceAll(batch, "char", new JValue(before), new JValue(after));
+            if (before.Length != after.Length)
+            {
+                AddPathReplaceAll(batch, "char", new JValue(before), new JValue(after));
+            }
         }
 
         private static void AddPathReplaceAll(CollabOperationBatch batch, string mode, JToken before, JToken after)
@@ -616,10 +623,12 @@ namespace CollabCharting
             return beforeHashes.SequenceEqual(afterHashes);
         }
 
-        private static bool TryFindSingleInsert(JArray before, JArray after, out int index)
+        private static bool TryFindContiguousInsert(JArray before, JArray after, out int index, out JArray inserted)
         {
             index = -1;
-            if (after.Count != before.Count + 1)
+            inserted = new JArray();
+            int count = after.Count - before.Count;
+            if (count <= 0)
             {
                 return false;
             }
@@ -631,12 +640,22 @@ namespace CollabCharting
             }
 
             index = i;
-            while (i < before.Count && JToken.DeepEquals(before[i], after[i + 1]))
+            while (i < before.Count && JToken.DeepEquals(before[i], after[i + count]))
             {
                 i++;
             }
 
-            return i == before.Count;
+            if (i != before.Count)
+            {
+                return false;
+            }
+
+            for (int j = 0; j < count; j++)
+            {
+                inserted.Add(after[index + j]?.DeepClone() ?? JValue.CreateNull());
+            }
+
+            return true;
         }
 
         private static bool TryFindContiguousDelete(JArray before, JArray after, out int index, out int count)
@@ -663,8 +682,16 @@ namespace CollabCharting
             return i == after.Count;
         }
 
-        private static bool TryFindStringInsert(string before, string after, out int index)
+        private static bool TryFindStringInsert(string before, string after, out int index, out string inserted)
         {
+            inserted = string.Empty;
+            int count = after.Length - before.Length;
+            if (count <= 0)
+            {
+                index = -1;
+                return false;
+            }
+
             index = 0;
             while (index < before.Length && before[index] == after[index])
             {
@@ -673,12 +700,13 @@ namespace CollabCharting
 
             for (int i = index; i < before.Length; i++)
             {
-                if (before[i] != after[i + 1])
+                if (before[i] != after[i + count])
                 {
                     return false;
                 }
             }
 
+            inserted = after.Substring(index, count);
             return true;
         }
 

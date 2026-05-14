@@ -84,23 +84,143 @@ namespace CollabCharting
             return Convert.ToBase64String(File.ReadAllBytes(full));
         }
 
+        public static byte[] ReadFileBytes(string rootLevelPath, string relativePath)
+        {
+            string full = ResolveLevelPath(rootLevelPath, relativePath);
+            return File.ReadAllBytes(full);
+        }
+
         public static List<ResourceManifestEntry> CollectRequiredFiles(CollabOperationBatch batch, string rootLevelPath)
         {
+            TryCollectRequiredFiles(batch, rootLevelPath, out List<ResourceManifestEntry> files, out _);
+            return files;
+        }
+
+        public static bool TryCollectRequiredFiles(
+            CollabOperationBatch batch,
+            string rootLevelPath,
+            out List<ResourceManifestEntry> requiredFiles,
+            out List<string> missingFiles)
+        {
             var files = new Dictionary<string, ResourceManifestEntry>(StringComparer.OrdinalIgnoreCase);
+            var missing = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
             if (batch == null || string.IsNullOrWhiteSpace(rootLevelPath) || !File.Exists(rootLevelPath))
             {
-                return files.Values.ToList();
+                requiredFiles = files.Values.ToList();
+                missingFiles = missing.ToList();
+                return missingFiles.Count == 0;
             }
 
             foreach (CollabAtomicOperation op in batch.Ops)
             {
-                CollectRequiredFiles(op.Payload, rootLevelPath, files);
+                CollectRequiredFiles(op, rootLevelPath, files, missing);
             }
 
-            return files.Values.OrderBy(file => file.RelativePath, StringComparer.Ordinal).ToList();
+            requiredFiles = files.Values.OrderBy(file => file.RelativePath, StringComparer.Ordinal).ToList();
+            missingFiles = missing.ToList();
+            return missingFiles.Count == 0;
         }
 
-        private static void CollectRequiredFiles(JToken? token, string rootLevelPath, Dictionary<string, ResourceManifestEntry> files)
+        public static bool LevelRootHasFiles(string rootLevelPath, IEnumerable<ResourceManifestEntry> files, out List<string> missingFiles)
+        {
+            missingFiles = new List<string>();
+            foreach (ResourceManifestEntry file in files)
+            {
+                if (file == null || !IsSafeRelativePath(file.RelativePath))
+                {
+                    missingFiles.Add(file?.RelativePath ?? "<invalid>");
+                    continue;
+                }
+
+                string full = ResolveLevelPath(rootLevelPath, file.RelativePath);
+                if (!File.Exists(full))
+                {
+                    missingFiles.Add(file.RelativePath);
+                    continue;
+                }
+
+                FileInfo info = new FileInfo(full);
+                if (info.Length != file.Size || !string.Equals(ComputeSha256(full), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    missingFiles.Add(file.RelativePath);
+                }
+            }
+
+            return missingFiles.Count == 0;
+        }
+
+        public static bool CacheHasFiles(string lobbyId, IEnumerable<ResourceManifestEntry> files, out List<string> missingFiles)
+        {
+            missingFiles = new List<string>();
+            foreach (ResourceManifestEntry file in files)
+            {
+                if (file == null || !IsSafeRelativePath(file.RelativePath))
+                {
+                    missingFiles.Add(file?.RelativePath ?? "<invalid>");
+                    continue;
+                }
+
+                string full = ResolveCachePath(lobbyId, file.RelativePath);
+                if (!File.Exists(full))
+                {
+                    missingFiles.Add(file.RelativePath);
+                    continue;
+                }
+
+                FileInfo info = new FileInfo(full);
+                if (info.Length != file.Size || !string.Equals(ComputeSha256(full), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    missingFiles.Add(file.RelativePath);
+                }
+            }
+
+            return missingFiles.Count == 0;
+        }
+
+        private static void CollectRequiredFiles(
+            CollabAtomicOperation op,
+            string rootLevelPath,
+            Dictionary<string, ResourceManifestEntry> files,
+            ISet<string> missingFiles)
+        {
+            if (op == null || op.Payload == null || op.Kind.EndsWith(".remove", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (op.Payload["changes"] is JArray changes)
+            {
+                foreach (JToken change in changes)
+                {
+                    if (change.Value<bool?>("NewExists") == true)
+                    {
+                        CollectRequiredFiles(change["NewValue"], rootLevelPath, files, missingFiles);
+                    }
+                }
+
+                return;
+            }
+
+            if (op.Kind.EndsWith(".add", StringComparison.Ordinal))
+            {
+                CollectRequiredFiles(op.Payload["item"], rootLevelPath, files, missingFiles);
+                return;
+            }
+
+            if (op.Kind == "decoration.reorder")
+            {
+                CollectRequiredFiles(op.Payload["items"], rootLevelPath, files, missingFiles);
+                return;
+            }
+
+            CollectRequiredFiles(op.Payload["newValue"] ?? op.Payload["value"] ?? op.Payload["values"], rootLevelPath, files, missingFiles);
+        }
+
+        private static void CollectRequiredFiles(
+            JToken? token,
+            string rootLevelPath,
+            Dictionary<string, ResourceManifestEntry> files,
+            ISet<string> missingFiles)
         {
             if (token == null)
             {
@@ -109,17 +229,21 @@ namespace CollabCharting
 
             if (token.Type == JTokenType.String)
             {
-                TryAddRequiredFile(rootLevelPath, token.Value<string>() ?? string.Empty, files);
+                TryAddRequiredFile(rootLevelPath, token.Value<string>() ?? string.Empty, files, missingFiles);
                 return;
             }
 
             foreach (JToken child in token.Children())
             {
-                CollectRequiredFiles(child, rootLevelPath, files);
+                CollectRequiredFiles(child, rootLevelPath, files, missingFiles);
             }
         }
 
-        private static void TryAddRequiredFile(string rootLevelPath, string value, Dictionary<string, ResourceManifestEntry> files)
+        private static void TryAddRequiredFile(
+            string rootLevelPath,
+            string value,
+            Dictionary<string, ResourceManifestEntry> files,
+            ISet<string> missingFiles)
         {
             string relativePath = NormalizeRelativePath(value);
             if (!IsSafeRelativePath(relativePath) || !HasSyncableFileExtension(relativePath))
@@ -131,6 +255,7 @@ namespace CollabCharting
             if (!File.Exists(full))
             {
                 Main.Mod?.Logger.Warning($"Collab operation references missing resource: {relativePath}");
+                missingFiles.Add(relativePath);
                 return;
             }
 
@@ -150,11 +275,34 @@ namespace CollabCharting
             File.WriteAllBytes(full, Convert.FromBase64String(base64));
         }
 
+        public static void WriteFileBytes(string lobbyId, string relativePath, byte[] bytes)
+        {
+            string full = ResolveCachePath(lobbyId, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(full) ?? string.Empty);
+            File.WriteAllBytes(full, bytes);
+        }
+
         public static void WriteFileBase64ToLevelRoot(string rootLevelPath, string relativePath, string base64)
         {
             string full = ResolveLevelPath(rootLevelPath, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(full) ?? string.Empty);
             File.WriteAllBytes(full, Convert.FromBase64String(base64));
+        }
+
+        public static void WriteFileBytesToLevelRoot(string rootLevelPath, string relativePath, byte[] bytes)
+        {
+            string full = ResolveLevelPath(rootLevelPath, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(full) ?? string.Empty);
+            File.WriteAllBytes(full, bytes);
+        }
+
+        public static string ComputeSha256(byte[] bytes)
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(bytes);
+                return BitConverter.ToString(hash).Replace("-", string.Empty);
+            }
         }
 
         public static string ResolveLevelPath(string rootLevelPath, string relativePath)

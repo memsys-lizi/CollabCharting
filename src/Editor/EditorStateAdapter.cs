@@ -170,6 +170,50 @@ namespace CollabCharting
             }
         }
 
+        public static void RefreshAfterDirectOperation(
+            string reason,
+            int selectedFloor,
+            bool pathChanged,
+            bool eventsChanged,
+            bool decorationsChanged)
+        {
+            if (!IsEditorReady)
+            {
+                return;
+            }
+
+            try
+            {
+                if (pathChanged)
+                {
+                    ADOBase.editor.RemakePath();
+                }
+                else if (eventsChanged)
+                {
+                    ADOBase.editor.ApplyEventsToFloors();
+                }
+
+                if (pathChanged || eventsChanged)
+                {
+                    RefreshSelectedFloorIndicators();
+                }
+
+                if (decorationsChanged)
+                {
+                    ADOBase.customLevel.ReloadAssets(force: true, reloadDecorations: false);
+                    ADOBase.editor.UpdateDecorationObjects();
+                }
+
+                RestoreSelectedFloor(selectedFloor);
+                MarkUnsaved();
+                ADOBase.editor.ShowNotification($"协作同步：{reason}");
+            }
+            catch (Exception ex)
+            {
+                Main.Mod?.Logger.Warning($"Failed to refresh editor after direct collab apply: {ex.Message}");
+            }
+        }
+
         private static void MarkUnsaved()
         {
             try

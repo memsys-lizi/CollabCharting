@@ -16,6 +16,9 @@ namespace CollabCharting
         private readonly Dictionary<string, CollabLock> locks = new Dictionary<string, CollabLock>();
         private readonly List<CollabOperationBatch> operationLog = new List<CollabOperationBatch>();
         private readonly Dictionary<string, CollabOperationBatch> pendingLocalOperations = new Dictionary<string, CollabOperationBatch>();
+        private readonly List<PendingOperationProposal> pendingOperationProposals = new List<PendingOperationProposal>();
+        private readonly SortedDictionary<int, CollabOperationBatch> pendingAcceptedOperations = new SortedDictionary<int, CollabOperationBatch>();
+        private readonly Dictionary<string, long> lastClientSeqByAuthor = new Dictionary<string, long>();
         private readonly HashSet<ulong> initialSyncSent = new HashSet<ulong>();
         private Callback<LobbyChatUpdate_t>? lobbyChatUpdate;
         private Callback<GameLobbyJoinRequested_t>? joinRequested;
@@ -27,6 +30,7 @@ namespace CollabCharting
         private string syncState = "idle";
         private float syncProgress;
         private float lockHeartbeatTimer;
+        private long nextClientSeq;
         private readonly List<CollabOperationBatch> pendingPlaybackOperations = new List<CollabOperationBatch>();
         private string pendingPlaybackReason = string.Empty;
         private string pendingPlaybackLevelPath = string.Empty;
@@ -163,7 +167,11 @@ namespace CollabCharting
             locks.Clear();
             operationLog.Clear();
             pendingLocalOperations.Clear();
+            pendingOperationProposals.Clear();
+            pendingAcceptedOperations.Clear();
+            lastClientSeqByAuthor.Clear();
             initialSyncSent.Clear();
+            nextClientSeq = 0;
             EntityIdRegistry.Reset();
             ClearPendingPlaybackSync();
             waitingForEditor = false;
@@ -326,7 +334,18 @@ namespace CollabCharting
                 batch.OperationId = Guid.NewGuid().ToString("N");
             }
 
-            AttachRequiredFiles(batch);
+            batch.ClientSeq = ++nextClientSeq;
+            if (!AttachRequiredFiles(batch, out string resourceError))
+            {
+                if (ADOBase.editor != null)
+                {
+                    ADOBase.editor.ShowNotification(resourceError);
+                }
+
+                AddEvent(resourceError, localId, localName);
+                EmitStatus();
+                return;
+            }
 
             if (IsHost)
             {
@@ -386,6 +405,10 @@ namespace CollabCharting
             lobbyId = new CSteamID(result.m_ulSteamIDLobby);
             revision = 1;
             initialSyncSent.Clear();
+            pendingOperationProposals.Clear();
+            pendingAcceptedOperations.Clear();
+            lastClientSeqByAuthor.Clear();
+            nextClientSeq = 0;
             SteamMatchmaking.SetLobbyData(lobbyId, "modVersion", Main.Mod?.Info.Version ?? "unknown");
             SteamMatchmaking.SetLobbyData(lobbyId, "protocolVersion", ProtocolVersion);
             SteamMatchmaking.SetLobbyData(lobbyId, "hostSteamId", SteamUser.GetSteamID().m_SteamID.ToString());
@@ -552,13 +575,36 @@ namespace CollabCharting
         {
             string relativePath = payload.Value<string>("RelativePath") ?? string.Empty;
             string base64 = payload.Value<string>("Base64") ?? string.Empty;
+            string expectedSha256 = payload.Value<string>("Sha256") ?? string.Empty;
+            long expectedSize = payload.Value<long?>("Size") ?? -1;
+
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromBase64String(base64);
+            }
+            catch (Exception ex)
+            {
+                Main.Mod?.Logger.Warning($"Rejected malformed collab resource {relativePath}: {ex.Message}");
+                return;
+            }
+
+            string actualSha256 = ResourceSync.ComputeSha256(bytes);
+            if ((expectedSize >= 0 && bytes.LongLength != expectedSize) ||
+                (!string.IsNullOrWhiteSpace(expectedSha256) &&
+                 !string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase)))
+            {
+                Main.Mod?.Logger.Warning($"Rejected collab resource {relativePath}: hash or size mismatch.");
+                return;
+            }
+
             if (IsHost && EditorStateAdapter.IsEditorReady)
             {
-                ResourceSync.WriteFileBase64ToLevelRoot(EditorStateAdapter.CurrentLevelPath, relativePath, base64);
+                ResourceSync.WriteFileBytesToLevelRoot(EditorStateAdapter.CurrentLevelPath, relativePath, bytes);
             }
             else
             {
-                ResourceSync.WriteFileBase64(LobbyId, relativePath, base64);
+                ResourceSync.WriteFileBytes(LobbyId, relativePath, bytes);
             }
 
             if (syncState != "synced")
@@ -566,6 +612,8 @@ namespace CollabCharting
                 syncState = "syncing";
             }
 
+            DrainPendingOperationProposals();
+            DrainAcceptedOperations();
             EmitStatus();
         }
 
@@ -692,6 +740,10 @@ namespace CollabCharting
             revision = initial.Revision;
             operationLog.Clear();
             pendingLocalOperations.Clear();
+            pendingOperationProposals.Clear();
+            pendingAcceptedOperations.Clear();
+            lastClientSeqByAuthor.Clear();
+            nextClientSeq = 0;
             EntityIdRegistry.InitializeFromLevelText(initial.LevelText);
             string levelPath = ResourceSync.ResolveCachePath(LobbyId, initial.LevelRelativePath);
             File.WriteAllText(levelPath, initial.LevelText);
@@ -710,6 +762,28 @@ namespace CollabCharting
                 return;
             }
 
+            if (batch.Revision > revision + 1)
+            {
+                pendingAcceptedOperations[batch.Revision] = batch;
+                AddEvent($"正在等待协作同步 r{revision + 1}，已暂存 r{batch.Revision}。");
+                EmitStatus();
+                return;
+            }
+
+            if (!HasRequiredResources(batch, out List<string> missingResources))
+            {
+                pendingAcceptedOperations[batch.Revision] = batch;
+                AddEvent($"正在等待协作资源：{FormatMissingResources(missingResources)}。", batch.AuthorSteamId, batch.AuthorName);
+                EmitStatus();
+                return;
+            }
+
+            ApplyAcceptedOperation(batch);
+            DrainAcceptedOperations();
+        }
+
+        private void ApplyAcceptedOperation(CollabOperationBatch batch)
+        {
             bool ownPending = pendingLocalOperations.Remove(batch.OperationId);
             revision = batch.Revision;
             RecordOperation(batch);
@@ -720,6 +794,20 @@ namespace CollabCharting
 
             AddEvent($"{batch.AuthorName} 的操作已同步 r{revision}（{DescribeBatch(batch)}）。", batch.AuthorSteamId, batch.AuthorName);
             EmitStatus();
+        }
+
+        private void DrainAcceptedOperations()
+        {
+            while (pendingAcceptedOperations.TryGetValue(revision + 1, out CollabOperationBatch batch))
+            {
+                if (!HasRequiredResources(batch, out _))
+                {
+                    return;
+                }
+
+                pendingAcceptedOperations.Remove(revision + 1);
+                ApplyAcceptedOperation(batch);
+            }
         }
 
         private void HandleOperationProposal(SteamTransport.NetEnvelope envelope)
@@ -738,38 +826,122 @@ namespace CollabCharting
             batch.AuthorSteamId = authorId;
             batch.AuthorName = string.IsNullOrWhiteSpace(batch.AuthorName) ? authorName : batch.AuthorName;
             Main.Mod?.Logger.Log($"Received operation proposal from {authorName}: {DescribeBatch(batch)} / base r{batch.BaseRevision}");
+
+            var proposal = new PendingOperationProposal
+            {
+                AuthorId = authorId,
+                AuthorName = authorName,
+                Batch = batch
+            };
+
+            if (!TryProcessOperationProposal(proposal, out string waitReason))
+            {
+                QueueOperationProposal(proposal, waitReason);
+            }
+            else
+            {
+                DrainPendingOperationProposals();
+            }
+        }
+
+        private bool TryProcessOperationProposal(PendingOperationProposal proposal, out string waitReason)
+        {
+            waitReason = string.Empty;
+            CollabOperationBatch batch = proposal.Batch;
+            string authorId = proposal.AuthorId;
+            string authorName = proposal.AuthorName;
+
+            if (!HasRequiredResources(batch, out List<string> missingResources))
+            {
+                waitReason = $"等待资源：{FormatMissingResources(missingResources)}";
+                return false;
+            }
+
+            if (!ValidateClientSequence(batch, authorId, out waitReason, out bool rejectedSequence))
+            {
+                return rejectedSequence;
+            }
+
             CollabOperationBatch transformed = OperationDiffUtility.CloneBatch(batch);
             if (!OperationDiffUtility.TransformForAcceptedOperations(transformed, operationLog, out string transformConflict))
             {
                 Main.Mod?.Logger.Warning($"Rejected operation transform from {authorName}: {transformConflict}");
                 RejectOperation(authorId, transformed.OperationId, transformConflict);
-                return;
+                return true;
             }
 
             if (!ValidateLocks(transformed, authorId, out string lockConflict))
             {
                 Main.Mod?.Logger.Warning($"Rejected operation lock from {authorName}: {lockConflict}");
                 RejectOperation(authorId, transformed.OperationId, lockConflict);
-                return;
+                return true;
             }
 
             if (!OperationApplier.TryApply(transformed, $"client-change r{revision + 1}", out string conflict))
             {
                 Main.Mod?.Logger.Warning($"Rejected operation apply from {authorName}: {conflict}");
                 RejectOperation(authorId, transformed.OperationId, conflict);
-                return;
+                return true;
             }
 
             revision++;
             transformed.Revision = revision;
+            transformed.ClientSeq = batch.ClientSeq;
             transformed.AuthorSteamId = authorId;
             transformed.AuthorName = authorName;
+            if (batch.ClientSeq > 0)
+            {
+                lastClientSeqByAuthor[authorId] = batch.ClientSeq;
+            }
+
             RecordOperation(transformed);
             BroadcastRequiredResources(transformed, authorId);
             Broadcast("operation.accepted", transformed);
             AddEvent($"{authorName} 的操作已同步 r{revision}（{DescribeBatch(transformed)}）。", authorId, authorName);
             Main.Mod?.Logger.Log($"Accepted peer operation from {authorName} r{revision}: {DescribeBatch(transformed)}");
             EmitStatus();
+            return true;
+        }
+
+        private void QueueOperationProposal(PendingOperationProposal proposal, string reason)
+        {
+            if (pendingOperationProposals.Exists(item =>
+                string.Equals(item.Batch.OperationId, proposal.Batch.OperationId, StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            pendingOperationProposals.Add(proposal);
+            Main.Mod?.Logger.Log($"Queued operation proposal {proposal.Batch.OperationId} from {proposal.AuthorName}: {reason}");
+            AddEvent($"{proposal.AuthorName} 的操作正在等待同步条件（{reason}）。", proposal.AuthorId, proposal.AuthorName);
+            EmitStatus();
+        }
+
+        private void DrainPendingOperationProposals()
+        {
+            if (!IsHost || pendingOperationProposals.Count == 0)
+            {
+                return;
+            }
+
+            bool progressed;
+            do
+            {
+                progressed = false;
+                for (int i = 0; i < pendingOperationProposals.Count;)
+                {
+                    PendingOperationProposal proposal = pendingOperationProposals[i];
+                    if (TryProcessOperationProposal(proposal, out _))
+                    {
+                        pendingOperationProposals.RemoveAt(i);
+                        progressed = true;
+                        continue;
+                    }
+
+                    i++;
+                }
+            }
+            while (progressed);
         }
 
         private void HandleOperationRejected(JToken payload)
@@ -875,14 +1047,88 @@ namespace CollabCharting
             return OperationDiffUtility.DescribeBatch(batch);
         }
 
-        private static void AttachRequiredFiles(CollabOperationBatch batch)
+        private static bool AttachRequiredFiles(CollabOperationBatch batch, out string error)
         {
+            error = string.Empty;
             if (!EditorStateAdapter.IsEditorReady)
             {
-                return;
+                return true;
             }
 
-            batch.RequiredFiles = ResourceSync.CollectRequiredFiles(batch, EditorStateAdapter.CurrentLevelPath);
+            if (!ResourceSync.TryCollectRequiredFiles(
+                    batch,
+                    EditorStateAdapter.CurrentLevelPath,
+                    out List<ResourceManifestEntry> files,
+                    out List<string> missingFiles))
+            {
+                error = $"操作引用的资源文件不存在：{FormatMissingResources(missingFiles)}";
+                batch.RequiredFiles = files;
+                return false;
+            }
+
+            batch.RequiredFiles = files;
+            return true;
+        }
+
+        private bool HasRequiredResources(CollabOperationBatch batch, out List<string> missingResources)
+        {
+            missingResources = new List<string>();
+            if (batch == null || batch.RequiredFiles.Count == 0)
+            {
+                return true;
+            }
+
+            if (IsHost && EditorStateAdapter.IsEditorReady)
+            {
+                return ResourceSync.LevelRootHasFiles(EditorStateAdapter.CurrentLevelPath, batch.RequiredFiles, out missingResources);
+            }
+
+            return ResourceSync.CacheHasFiles(LobbyId, batch.RequiredFiles, out missingResources);
+        }
+
+        private bool ValidateClientSequence(
+            CollabOperationBatch batch,
+            string authorId,
+            out string waitReason,
+            out bool rejected)
+        {
+            waitReason = string.Empty;
+            rejected = false;
+            if (batch.ClientSeq <= 0)
+            {
+                return true;
+            }
+
+            lastClientSeqByAuthor.TryGetValue(authorId, out long lastSeq);
+            if (batch.ClientSeq <= lastSeq)
+            {
+                RejectOperation(authorId, batch.OperationId, $"操作序号已过期：{batch.ClientSeq}");
+                rejected = true;
+                return false;
+            }
+
+            if (batch.ClientSeq > lastSeq + 1)
+            {
+                waitReason = $"等待操作序号 {lastSeq + 1}";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static string FormatMissingResources(IList<string> missingFiles)
+        {
+            if (missingFiles == null || missingFiles.Count == 0)
+            {
+                return "未知文件";
+            }
+
+            if (missingFiles.Count <= 3)
+            {
+                return string.Join(", ", missingFiles);
+            }
+
+            return $"{string.Join(", ", new[] { missingFiles[0], missingFiles[1], missingFiles[2] })} 等 {missingFiles.Count} 个文件";
         }
 
         private void BroadcastRequiredResources(CollabOperationBatch batch, string exceptSteamId = "")
@@ -1209,6 +1455,15 @@ namespace CollabCharting
             {
                 throw new InvalidOperationException("请先在编辑器中打开或保存一个 .adofai 关卡。");
             }
+        }
+
+        private sealed class PendingOperationProposal
+        {
+            public string AuthorId { get; set; } = string.Empty;
+
+            public string AuthorName { get; set; } = string.Empty;
+
+            public CollabOperationBatch Batch { get; set; } = new CollabOperationBatch();
         }
     }
 }

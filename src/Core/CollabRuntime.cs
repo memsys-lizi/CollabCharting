@@ -38,6 +38,7 @@ namespace CollabCharting
                 Session.Update(dt);
                 EnforceEditorLifecycle(dt);
                 RefreshSelectionLock(dt);
+                EditorCommandCapture.Tick();
                 OperationCapture.Update(dt);
                 EditorToolbarEntry.Tick();
                 EditorLockOverlay.Update();
@@ -58,6 +59,7 @@ namespace CollabCharting
             initialized = false;
             EditorLockOverlay.Clear();
             CollabToastOverlay.Clear();
+            EditorCommandCapture.Reset();
             Session.Dispose();
         }
 
