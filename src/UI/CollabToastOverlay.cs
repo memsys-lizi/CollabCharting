@@ -136,10 +136,22 @@ namespace CollabCharting
             }
 
             var texture = new Texture2D((int)width, (int)height, TextureFormat.RGBA32, false);
-            texture.LoadRawTextureData(rgba);
+            texture.LoadRawTextureData(FlipVertically(rgba, (int)width, (int)height));
             texture.Apply(updateMipmaps: false, makeNoLongerReadable: true);
             AvatarCache[id] = texture;
             return texture;
+        }
+
+        private static byte[] FlipVertically(byte[] rgba, int width, int height)
+        {
+            int stride = width * 4;
+            byte[] flipped = new byte[rgba.Length];
+            for (int y = 0; y < height; y++)
+            {
+                Buffer.BlockCopy(rgba, y * stride, flipped, (height - 1 - y) * stride, stride);
+            }
+
+            return flipped;
         }
 
         private static void EnsureStyles()
