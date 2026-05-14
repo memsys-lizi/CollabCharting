@@ -286,6 +286,12 @@ namespace CollabCharting
                 return false;
             }
 
+            int existingIndex = FindEntityIndex(arrayName, array, op.Target, item, index);
+            if (existingIndex >= 0)
+            {
+                return true;
+            }
+
             array.Insert(Math.Min(Math.Max(index, 0), array.Count), item.DeepClone());
             return true;
         }
@@ -298,8 +304,7 @@ namespace CollabCharting
             int index = FindEntityIndex(arrayName, array, op.Target, item);
             if (index < 0)
             {
-                conflict = "目标对象已不存在";
-                return false;
+                return true;
             }
 
             if (item != null && OperationDiffUtility.HashToken(array[index]) != OperationDiffUtility.HashToken(item))
@@ -314,13 +319,22 @@ namespace CollabCharting
 
         private static bool ApplyArrayProperties(JObject root, string arrayName, CollabAtomicOperation op, JObject payload, out string conflict)
         {
+            conflict = string.Empty;
             JArray array = EnsureArray(root, arrayName);
             int preferredIndex = payload.Value<int?>("index") ?? op.Target.Index;
             int index = FindEntityIndex(arrayName, array, op.Target, null, preferredIndex);
             if (index < 0 || !(array[index] is JObject item))
             {
-                conflict = "目标对象已不存在";
-                return false;
+                JObject? afterItem = payload["afterItem"] as JObject;
+                if (afterItem == null)
+                {
+                    conflict = "目标对象已不存在";
+                    return false;
+                }
+
+                int insertIndex = Math.Min(Math.Max(preferredIndex, 0), array.Count);
+                array.Insert(insertIndex, afterItem.DeepClone());
+                return true;
             }
 
             return ApplyPropertyChanges(item, payload, out conflict);

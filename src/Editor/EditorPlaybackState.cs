@@ -9,9 +9,8 @@ namespace CollabCharting
                 try
                 {
                     return ADOBase.editor != null &&
-                           ADOBase.controller != null &&
                            ADOBase.isLevelEditor &&
-                           !ADOBase.controller.paused;
+                           ADOBase.editor.playMode;
                 }
                 catch
                 {

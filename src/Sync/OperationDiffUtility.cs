@@ -499,8 +499,20 @@ namespace CollabCharting
                 }
 
                 AddOperation(batch, domain + ".setProperties", CreateTarget(afterObject, domain, pair.Value, pair.Key),
-                    new JObject { ["index"] = pair.Value, ["changes"] = JToken.FromObject(changes) },
-                    new JObject { ["index"] = beforeIndex, ["changes"] = JToken.FromObject(InvertChanges(changes)) },
+                    new JObject
+                    {
+                        ["index"] = pair.Value,
+                        ["changes"] = JToken.FromObject(changes),
+                        ["beforeItem"] = beforeObject.DeepClone(),
+                        ["afterItem"] = afterObject.DeepClone()
+                    },
+                    new JObject
+                    {
+                        ["index"] = beforeIndex,
+                        ["changes"] = JToken.FromObject(InvertChanges(changes)),
+                        ["beforeItem"] = afterObject.DeepClone(),
+                        ["afterItem"] = beforeObject.DeepClone()
+                    },
                     beforeObject);
             }
         }

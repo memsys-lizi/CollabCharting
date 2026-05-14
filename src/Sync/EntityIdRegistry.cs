@@ -238,6 +238,12 @@ namespace CollabCharting
                 {
                     domainRecords[index] = CreateRecord(domain, entityId, array[index]);
                 }
+                else if (op.Payload["afterItem"] is JObject)
+                {
+                    int insertIndex = Math.Min(Math.Max(op.Payload.Value<int?>("index") ?? array.Count - 1, 0), domainRecords.Count);
+                    JToken item = insertIndex >= 0 && insertIndex < array.Count ? array[insertIndex] : op.Payload["afterItem"]!;
+                    domainRecords.Insert(insertIndex, CreateRecord(domain, entityId, item));
+                }
             }
             else if (kind.EndsWith(".reorder", StringComparison.Ordinal) && op.Payload["entityIds"] is JArray idArray)
             {

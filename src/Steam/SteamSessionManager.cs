@@ -737,6 +737,7 @@ namespace CollabCharting
                 : "成员";
             batch.AuthorSteamId = authorId;
             batch.AuthorName = string.IsNullOrWhiteSpace(batch.AuthorName) ? authorName : batch.AuthorName;
+            Main.Mod?.Logger.Log($"Received operation proposal from {authorName}: {DescribeBatch(batch)} / base r{batch.BaseRevision}");
             CollabOperationBatch transformed = OperationDiffUtility.CloneBatch(batch);
             if (!OperationDiffUtility.TransformForAcceptedOperations(transformed, operationLog, out string transformConflict))
             {

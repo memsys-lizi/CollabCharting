@@ -6,17 +6,55 @@ namespace CollabCharting
     {
         private static SaveStateScope? rootScope;
         private static string rootBefore = string.Empty;
+        private static string baseline = string.Empty;
+        private static float pollTimer;
         private static int depth;
 
         public static void ResetBaseline()
         {
             rootScope = null;
             rootBefore = string.Empty;
+            baseline = string.Empty;
+            pollTimer = 0f;
             depth = 0;
         }
 
         public static void Update(float dt)
         {
+            if (!CollabRuntime.Session.InLobby ||
+                CollabRuntime.IsApplyingRemote ||
+                !EditorStateAdapter.IsEditorReady)
+            {
+                baseline = string.Empty;
+                pollTimer = 0f;
+                return;
+            }
+
+            if (EditorPlaybackState.IsPreviewPlaying || depth > 0 || rootScope != null)
+            {
+                return;
+            }
+
+            string current = EditorStateAdapter.EncodeCurrentLevel();
+            if (string.IsNullOrWhiteSpace(baseline))
+            {
+                baseline = current;
+                return;
+            }
+
+            pollTimer += dt;
+            if (pollTimer < 0.35f)
+            {
+                return;
+            }
+
+            pollTimer = 0f;
+            if (EditorStateAdapter.HashLevelText(baseline) == EditorStateAdapter.HashLevelText(current))
+            {
+                return;
+            }
+
+            PublishDiff(baseline, current, "local-edit-poll");
         }
 
         public static void Begin(SaveStateScope scope, bool dataHasChanged)
@@ -72,7 +110,13 @@ namespace CollabCharting
                 return;
             }
 
-            if (!OperationDiffUtility.TryCreateBatch(before, after, "local-edit", out CollabOperationBatch batch))
+            PublishDiff(before, after, "local-edit");
+        }
+
+        private static void PublishDiff(string before, string after, string reason)
+        {
+            baseline = after;
+            if (!OperationDiffUtility.TryCreateBatch(before, after, reason, out CollabOperationBatch batch))
             {
                 Main.Mod?.Logger.Warning("Collab operation capture saw level changes but could not classify them.");
                 return;
