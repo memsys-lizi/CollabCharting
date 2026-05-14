@@ -698,36 +698,84 @@ namespace CollabCharting
 
             JToken payload = envelope.Payload ?? new JObject();
             CollabSnapshot snapshot = payload.ToObject<CollabSnapshot>() ?? new CollabSnapshot();
-            if (snapshot.Revision != revision)
-            {
-                AddEvent("已拒绝过期的成员变更，并回传最新状态。");
-                if (ulong.TryParse(envelope.Sender, out ulong stalePeer))
-                {
-                    transport.Send(new CSteamID(stalePeer), "snapshot.update", new CollabSnapshot
-                    {
-                        Revision = revision,
-                        LevelText = EditorStateAdapter.EncodeCurrentLevel(),
-                        LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
-                        Reason = "stale-proposal-rejected"
-                    }, revision);
-                }
-
-                EmitStatus();
-                return;
-            }
-
-            revision++;
-            snapshot.Revision = revision;
             string authorId = envelope.Sender;
             string authorName = ulong.TryParse(authorId, out ulong steamId)
                 ? SteamFriends.GetFriendPersonaName(new CSteamID(steamId))
                 : "成员";
+            if (snapshot.Revision != revision)
+            {
+                if (!TryRebaseStaleSnapshot(snapshot, authorId, authorName))
+                {
+                    EmitStatus();
+                    return;
+                }
+            }
+
+            revision++;
+            snapshot.Revision = revision;
             QueueOrApplySnapshot(snapshot, $"client-change r{snapshot.Revision}");
             RecordHistory(authorId, authorName, snapshot.BeforeLevelText, snapshot.LevelText, snapshot.Reason);
             BroadcastCurrentResources();
             Broadcast("snapshot.update", snapshot);
             AddEvent($"{authorName} 的编辑已同步 r{revision}。", authorId, authorName);
             EmitStatus();
+        }
+
+        private bool TryRebaseStaleSnapshot(CollabSnapshot snapshot, string authorId, string authorName)
+        {
+            string currentLevelText = EditorStateAdapter.EncodeCurrentLevel();
+            if (string.IsNullOrWhiteSpace(snapshot.BeforeLevelText) ||
+                string.IsNullOrWhiteSpace(snapshot.LevelText) ||
+                string.IsNullOrWhiteSpace(currentLevelText))
+            {
+                RejectStaleSnapshot(authorId, authorName, "缺少可合并的修改基线。");
+                return false;
+            }
+
+            try
+            {
+                List<JsonDiffOperation> diff = JsonPatchUtility.CreateDiff(snapshot.BeforeLevelText, snapshot.LevelText);
+                if (diff.Count == 0)
+                {
+                    AddEvent($"{authorName} 的过期提交没有实际修改。", authorId, authorName);
+                    return false;
+                }
+
+                if (!JsonPatchUtility.TryApply(currentLevelText, diff, reverse: false, out string rebasedLevelText, out string conflict))
+                {
+                    RejectStaleSnapshot(authorId, authorName, conflict);
+                    return false;
+                }
+
+                snapshot.BeforeLevelText = currentLevelText;
+                snapshot.LevelText = rebasedLevelText;
+                snapshot.Reason = string.IsNullOrWhiteSpace(snapshot.Reason)
+                    ? "rebased-local-edit"
+                    : snapshot.Reason + "+rebased";
+                AddEvent($"{authorName} 的并行编辑已自动合并。", authorId, authorName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                RejectStaleSnapshot(authorId, authorName, ex.Message);
+                return false;
+            }
+        }
+
+        private void RejectStaleSnapshot(string authorId, string authorName, string reason)
+        {
+            AddEvent($"无法自动合并 {authorName} 的编辑：{reason}", authorId, authorName);
+            SendHistoryNotice(authorId, false, $"你的修改和其他人的修改冲突，未自动合并：{reason}");
+            if (ulong.TryParse(authorId, out ulong stalePeer))
+            {
+                transport.Send(new CSteamID(stalePeer), "snapshot.update", new CollabSnapshot
+                {
+                    Revision = revision,
+                    LevelText = EditorStateAdapter.EncodeCurrentLevel(),
+                    LevelRelativePath = Path.GetFileName(EditorStateAdapter.CurrentLevelPath),
+                    Reason = "stale-proposal-conflict"
+                }, revision);
+            }
         }
 
         private void HandleLockUpdate(JToken payload)
