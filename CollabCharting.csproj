@@ -53,9 +53,6 @@
     <Reference Include="DOTweenPro">
       <HintPath>$(ManagedAssembliesDir)\DOTweenPro.dll</HintPath>
     </Reference>
-    <Reference Include="Steamworks.NET">
-      <HintPath>$(ManagedAssembliesDir)\com.rlabrecque.steamworks.net.dll</HintPath>
-    </Reference>
     <Reference Include="RDTools">
       <HintPath>$(ManagedAssembliesDir)\RDTools.dll</HintPath>
     </Reference>

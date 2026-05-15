@@ -80,7 +80,6 @@ namespace CollabCharting
             }
 
             lastOverlayOpenAt = Time.unscaledTime;
-            CollabRuntime.Session.WarmupSteam();
             InvokeBridge("OpenSteamOverlay");
         }
 

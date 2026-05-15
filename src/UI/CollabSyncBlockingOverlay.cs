@@ -58,7 +58,7 @@ namespace CollabCharting
             string state = CollabRuntime.Session.SyncState;
             if (state == "joining")
             {
-                return "正在加入 Steam 房间";
+                return "正在加入协作房间";
             }
 
             if (state == "syncing")

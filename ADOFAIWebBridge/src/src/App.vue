@@ -29,11 +29,9 @@
 
           <div class="session-summary">
             <div>
-              <Radio class="summary-icon" />
-              <span>Steam</span>
-              <strong :class="steamClass">
-                {{ steamLabel }}
-              </strong>
+              <UserCircle class="summary-icon" />
+              <span>账号</span>
+              <strong :class="accountClass">{{ accountLabel }}</strong>
             </div>
             <div>
               <Gauge class="summary-icon" />
@@ -48,13 +46,13 @@
           </div>
 
           <div class="actions">
-            <button type="button" :disabled="busy || status?.InLobby" @click="createLobby">
+            <button type="button" :disabled="busy || status?.AccountAvailable" @click="startAuth">
+              <LogIn class="icon" />
+              登录账号
+            </button>
+            <button type="button" :disabled="busy || !status?.AccountAvailable || status?.InLobby" @click="createLobby">
               <Users class="icon" />
               创建房间
-            </button>
-            <button type="button" :disabled="busy || !status?.InLobby" @click="openInviteDialog">
-              <UserPlus class="icon" />
-              Steam 邀请
             </button>
             <button type="button" class="danger" :disabled="busy || !status?.InLobby" @click="leaveLobby">
               <DoorOpen class="icon" />
@@ -63,8 +61,8 @@
           </div>
 
           <div class="join-row">
-            <input v-model.trim="joinLobbyId" type="text" placeholder="Steam Lobby ID" />
-            <button type="button" :disabled="busy || !joinLobbyId" @click="joinLobby">
+            <input v-model.trim="joinLobbyId" type="text" placeholder="协作房间码" />
+            <button type="button" :disabled="busy || !status?.AccountAvailable || !joinLobbyId" @click="joinLobby">
               <LogIn class="icon" />
               加入
             </button>
@@ -73,7 +71,7 @@
           <dl class="details compact-details">
             <div>
               <dt>本机</dt>
-              <dd>{{ status?.LocalName || "未知" }} {{ status?.LocalSteamId ? `(${status.LocalSteamId})` : "" }}</dd>
+              <dd>{{ status?.LocalName || "未登录" }} {{ status?.LocalUserId ? `(${status.LocalUserId})` : "" }}</dd>
             </div>
             <div>
               <dt>房主</dt>
@@ -115,10 +113,10 @@
           </div>
 
           <div class="member-list">
-            <div v-for="member in status?.Members ?? []" :key="member.SteamId" class="member-row">
+            <div v-for="member in status?.Members ?? []" :key="member.UserId" class="member-row">
               <span class="avatar"><Crown v-if="member.IsHost" class="avatar-icon" />{{ initials(member.Name) }}</span>
               <span>
-                <strong>{{ member.Name || member.SteamId }}</strong>
+                <strong>{{ member.Name || member.UserId }}</strong>
                 <small>{{ member.IsHost ? "房主" : "成员" }}{{ member.IsLocal ? " / 我" : "" }}</small>
               </span>
             </div>
@@ -128,37 +126,6 @@
       </div>
 
       <aside class="column side-column">
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>好友</h2>
-              <p>Steam 好友邀请</p>
-            </div>
-            <button type="button" class="ghost icon-button" :disabled="busy || !status?.SteamAvailable" @click="loadFriends">
-              <RefreshCw class="icon" />
-              读取
-            </button>
-          </div>
-
-          <div class="friend-list">
-            <button
-              v-for="friend in friends"
-              :key="friend.SteamId"
-              type="button"
-              class="friend-row"
-              :disabled="busy || !status?.InLobby"
-              @click="inviteFriend(friend.SteamId)"
-            >
-              <span>
-                <strong>{{ friend.Name || friend.SteamId }}</strong>
-                <small>{{ friend.State }}</small>
-              </span>
-              <span class="invite-label"><Send class="icon" />邀请</span>
-            </button>
-            <p v-if="!friends.length" class="empty">未读取好友</p>
-          </div>
-        </section>
-
         <section class="panel">
           <div class="panel-header">
             <div>
@@ -186,10 +153,8 @@ import {
   HardDriveDownload,
   Activity,
   LogIn,
-  Radio,
   RefreshCw,
-  Send,
-  UserPlus,
+  UserCircle,
   Users,
   Wifi,
   WifiOff
@@ -197,26 +162,20 @@ import {
 import { createBridgeClient } from "./bridge";
 
 type CollabMember = {
-  SteamId: string;
+  UserId: string;
   Name: string;
   IsHost: boolean;
   IsLocal: boolean;
 };
 
-type CollabFriend = {
-  SteamId: string;
-  Name: string;
-  State: string;
-};
-
 type CollabStatus = {
-  SteamAvailable: boolean;
-  LocalSteamId: string;
+  AccountAvailable: boolean;
+  LocalUserId: string;
   LocalName: string;
   InLobby: boolean;
   IsHost: boolean;
   LobbyId: string;
-  HostSteamId: string;
+  HostUserId: string;
   LevelName: string;
   LevelPath: string;
   Revision: number;
@@ -227,16 +186,33 @@ type CollabStatus = {
   RecentEvents: string[];
 };
 
+type CollabAuthStart = {
+  LoginId: string;
+  AuthorizationUrl: string;
+};
+
+type CollabAuthPoll = {
+  Status: "pending" | "ok" | "error" | "expired";
+  RelayToken?: string;
+  Message?: string;
+  User?: {
+    UserId: string;
+    Username: string;
+    Nickname: string;
+    AvatarUrl: string;
+    Email: string;
+  };
+};
+
 const bridge = createBridgeClient();
 const connected = ref(false);
 const busy = ref(false);
 const status = ref<CollabStatus | null>(null);
-const friends = ref<CollabFriend[]>([]);
 const joinLobbyId = ref("");
 const message = ref("");
-const steamChecking = ref(true);
 let stopStatusListener: (() => void) | undefined;
 let statusRefreshTimer: number | undefined;
+let authPollTimer: number | undefined;
 
 const lobbyLabel = computed(() => {
   if (!status.value?.InLobby) {
@@ -247,6 +223,10 @@ const lobbyLabel = computed(() => {
 });
 
 const roleLabel = computed(() => {
+  if (!status.value?.AccountAvailable) {
+    return "先登录 ADOFAITools 账号";
+  }
+
   if (!status.value?.InLobby) {
     return "先打开一个关卡，然后创建或加入房间";
   }
@@ -254,29 +234,23 @@ const roleLabel = computed(() => {
   return status.value.IsHost ? "房主权威状态" : "成员同步状态";
 });
 
-const steamLabel = computed(() => {
-  if (status.value?.SteamAvailable) {
-    return "可用";
+const accountLabel = computed(() => {
+  if (status.value?.AccountAvailable) {
+    return status.value.LocalName || "已登录";
   }
 
-  return steamChecking.value ? "检测中" : "不可用";
+  return "未登录";
 });
 
-const steamClass = computed(() => {
-  if (status.value?.SteamAvailable) {
-    return "good";
-  }
-
-  return steamChecking.value ? "pending" : "bad";
-});
+const accountClass = computed(() => (status.value?.AccountAvailable ? "good" : "bad"));
 
 const hostLabel = computed(() => {
-  if (!status.value?.HostSteamId) {
+  if (!status.value?.HostUserId) {
     return "无";
   }
 
-  const host = status.value.Members.find(member => member.SteamId === status.value?.HostSteamId);
-  return host ? `${host.Name} (${host.SteamId})` : status.value.HostSteamId;
+  const host = status.value.Members.find(member => member.UserId === status.value?.HostUserId);
+  return host ? `${host.Name} (${host.UserId})` : status.value.HostUserId;
 });
 
 const syncPercent = computed(() => {
@@ -285,7 +259,7 @@ const syncPercent = computed(() => {
 });
 
 const syncLabel = computed(() => {
-  const State = status.value?.SyncState ?? "idle";
+  const state = status.value?.SyncState ?? "idle";
   const labels: Record<string, string> = {
     idle: "空闲",
     creating: "创建房间中",
@@ -294,10 +268,11 @@ const syncLabel = computed(() => {
     syncing: "同步资源中",
     sending: "发送资源中",
     synced: "已同步",
+    queued: "等待编辑器",
     error: "同步错误"
   };
 
-  return `${labels[State] ?? State} / ${syncPercent.value}%`;
+  return `${labels[state] ?? state} / ${syncPercent.value}%`;
 });
 
 async function connect() {
@@ -306,30 +281,16 @@ async function connect() {
     connected.value = true;
     stopStatusListener = bridge.listen<CollabStatus>("collab.status", data => {
       status.value = data;
-      if (data.SteamAvailable) {
-        steamChecking.value = false;
-      }
     });
     await refreshStatus();
-    scheduleWarmStatusRefresh();
+    scheduleStatusRefresh();
   } catch (reason) {
     connected.value = false;
     message.value = formatError(reason);
   }
 }
 
-function scheduleWarmStatusRefresh() {
-  steamChecking.value = !status.value?.SteamAvailable;
-  window.setTimeout(refreshStatusQuietly, 150);
-  window.setTimeout(refreshStatusQuietly, 350);
-  window.setTimeout(refreshStatusQuietly, 700);
-  window.setTimeout(refreshStatusQuietly, 1200);
-  window.setTimeout(refreshStatusQuietly, 2200);
-  window.setTimeout(() => {
-    if (!status.value?.SteamAvailable) {
-      steamChecking.value = false;
-    }
-  }, 3200);
+function scheduleStatusRefresh() {
   window.clearInterval(statusRefreshTimer);
   statusRefreshTimer = window.setInterval(refreshStatusQuietly, 5000);
 }
@@ -352,9 +313,6 @@ async function withBusy(action: () => Promise<void>) {
 
 async function refreshStatus() {
   status.value = await bridge.invoke<CollabStatus>("collab.getStatus");
-  if (status.value.SteamAvailable) {
-    steamChecking.value = false;
-  }
 }
 
 async function refreshStatusQuietly() {
@@ -364,6 +322,37 @@ async function refreshStatusQuietly() {
     }
   } catch {
     // A transient overlay bridge refresh should not replace user-facing messages.
+  }
+}
+
+function startAuth() {
+  void withBusy(async () => {
+    const auth = await bridge.invoke<CollabAuthStart>("collab.startAuth");
+    message.value = "已打开登录页面，登录完成后会自动连接。";
+    window.open(auth.AuthorizationUrl, "_blank", "noopener,noreferrer");
+    window.clearInterval(authPollTimer);
+    authPollTimer = window.setInterval(() => void pollAuth(auth.LoginId), 1500);
+  });
+}
+
+async function pollAuth(loginId: string) {
+  try {
+    const result = await bridge.invoke<CollabAuthPoll>("collab.pollAuth", { loginId });
+    if (result.Status === "pending") {
+      return;
+    }
+
+    window.clearInterval(authPollTimer);
+    if (result.Status === "ok") {
+      message.value = "账号登录完成";
+      await refreshStatus();
+      return;
+    }
+
+    message.value = result.Message || "登录失败，请重新尝试。";
+  } catch (reason) {
+    window.clearInterval(authPollTimer);
+    message.value = formatError(reason);
   }
 }
 
@@ -390,63 +379,43 @@ function leaveLobby() {
   });
 }
 
-function openInviteDialog() {
-  void withBusy(async () => {
-    await bridge.invoke("collab.openInviteDialog");
-    await refreshStatus();
-  });
-}
-
 function forceSync() {
   void withBusy(async () => {
     status.value = await bridge.invoke<CollabStatus>("collab.forceSync");
   });
 }
 
-function loadFriends() {
-  void withBusy(async () => {
-    friends.value = await bridge.invoke<CollabFriend[]>("collab.getFriends");
-  });
-}
-
-function inviteFriend(SteamId: string) {
-  void withBusy(async () => {
-    await bridge.invoke("collab.inviteFriend", { steamId: SteamId });
-    message.value = "邀请已发送";
-    await refreshStatus();
-  });
-}
-
-function initials(Name: string) {
-  const clean = (Name || "?").trim();
+function initials(name: string) {
+  const clean = (name || "?").trim();
   return clean.slice(0, 2).toUpperCase();
 }
 
 function formatError(reason: unknown) {
-  const message = reason instanceof Error ? reason.message : String(reason);
-  if (!message || message === "Bridge RPC failed." || message === "Bridge RPC failed") {
+  const text = reason instanceof Error ? reason.message : String(reason);
+  if (!text || text === "Bridge RPC failed." || text === "Bridge RPC failed") {
     return "操作失败，请确认游戏编辑器和协作 Mod 正常运行。";
   }
 
-  if (message.includes("当前编辑器没有打开可同步") || message.includes("请先在编辑器中打开或保存")) {
+  if (text.includes("当前编辑器没有打开可同步") || text.includes("请先在编辑器中打开或保存")) {
     return "请先在编辑器中打开或保存一个 .adofai 关卡。";
   }
 
-  if (message.includes("Steamworks 尚未初始化")) {
-    return "Steam 尚未初始化，请确认通过 Steam 启动游戏。";
+  if (text.includes("请先登录")) {
+    return "请先登录 ADOFAITools 账号。";
   }
 
-  if (message.includes("Bridge WebSocket")) {
+  if (text.includes("Bridge WebSocket")) {
     return "WebUI 尚未连接到游戏内桥接服务，请关闭后从 Mod 入口重新打开。";
   }
 
-  return message;
+  return text;
 }
 
 onMounted(connect);
 
 onUnmounted(() => {
   window.clearInterval(statusRefreshTimer);
+  window.clearInterval(authPollTimer);
   stopStatusListener?.();
   bridge.disconnect();
 });

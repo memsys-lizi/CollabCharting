@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Steamworks;
 using UnityEngine;
 
 namespace CollabCharting
@@ -11,7 +10,6 @@ namespace CollabCharting
         private const float FadeSeconds = 0.45f;
         private const int MaxToasts = 3;
         private static readonly List<Toast> Toasts = new List<Toast>();
-        private static readonly Dictionary<ulong, Texture2D> AvatarCache = new Dictionary<ulong, Texture2D>();
         private static GUIStyle? containerStyle;
         private static GUIStyle? titleStyle;
         private static GUIStyle? bodyStyle;
@@ -32,7 +30,7 @@ namespace CollabCharting
             instance = host.AddComponent<CollabToastOverlay>();
         }
 
-        public static void Push(string message, string steamId = "", string name = "")
+        public static void Push(string message, string userId = "", string name = "")
         {
             if (string.IsNullOrWhiteSpace(message))
             {
@@ -43,7 +41,7 @@ namespace CollabCharting
             Toasts.Insert(0, new Toast
             {
                 Message = StripTimestamp(message),
-                SteamId = steamId,
+                UserId = userId,
                 Name = name,
                 CreatedAt = Time.unscaledTime
             });
@@ -98,60 +96,13 @@ namespace CollabCharting
             GUI.Box(rect, GUIContent.none, containerStyle);
 
             Rect avatarRect = new Rect(rect.x + 10f, rect.y + 9f, 36f, 36f);
-            Texture2D? avatar = TryGetAvatar(toast.SteamId);
-            GUI.DrawTexture(avatarRect, avatar != null ? avatar : avatarFallbackTexture, ScaleMode.ScaleToFit, true);
-            if (avatar == null)
-            {
-                GUI.Label(avatarRect, GetInitial(toast), avatarTextStyle);
-            }
+            GUI.DrawTexture(avatarRect, avatarFallbackTexture, ScaleMode.ScaleToFit, true);
+            GUI.Label(avatarRect, GetInitial(toast), avatarTextStyle);
 
             string actor = string.IsNullOrWhiteSpace(toast.Name) ? "协作动态" : toast.Name;
             GUI.Label(new Rect(rect.x + 56f, rect.y + 8f, rect.width - 68f, 18f), actor, titleStyle);
             GUI.Label(new Rect(rect.x + 56f, rect.y + 27f, rect.width - 68f, 20f), toast.Message, bodyStyle);
             GUI.color = oldColor;
-        }
-
-        private static Texture2D? TryGetAvatar(string steamId)
-        {
-            if (!SteamIntegration.initialized || !ulong.TryParse(steamId, out ulong id))
-            {
-                return null;
-            }
-
-            if (AvatarCache.TryGetValue(id, out Texture2D cached))
-            {
-                return cached;
-            }
-
-            int image = SteamFriends.GetSmallFriendAvatar(new CSteamID(id));
-            if (image <= 0 || !SteamUtils.GetImageSize(image, out uint width, out uint height) || width == 0 || height == 0)
-            {
-                return null;
-            }
-
-            byte[] rgba = new byte[(int)(width * height * 4)];
-            if (!SteamUtils.GetImageRGBA(image, rgba, rgba.Length))
-            {
-                return null;
-            }
-
-            var texture = new Texture2D((int)width, (int)height, TextureFormat.RGBA32, false);
-            texture.LoadRawTextureData(FlipVertically(rgba, (int)width, (int)height));
-            texture.Apply(updateMipmaps: false, makeNoLongerReadable: true);
-            AvatarCache[id] = texture;
-            return texture;
-        }
-
-        private static byte[] FlipVertically(byte[] rgba, int width, int height)
-        {
-            int stride = width * 4;
-            byte[] flipped = new byte[rgba.Length];
-            for (int y = 0; y < height; y++)
-            {
-                Buffer.BlockCopy(rgba, y * stride, flipped, (height - 1 - y) * stride, stride);
-            }
-
-            return flipped;
         }
 
         private static void EnsureStyles()
@@ -219,7 +170,7 @@ namespace CollabCharting
         {
             public string Message { get; set; } = string.Empty;
 
-            public string SteamId { get; set; } = string.Empty;
+            public string UserId { get; set; } = string.Empty;
 
             public string Name { get; set; } = string.Empty;
 

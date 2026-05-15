@@ -60,7 +60,7 @@ namespace CollabCharting
             {
                 OperationId = Guid.NewGuid().ToString("N"),
                 BaseRevision = source.Revision,
-                AuthorSteamId = source.AuthorSteamId,
+                AuthorUserId = source.AuthorUserId,
                 AuthorName = source.AuthorName,
                 Reason = reason,
                 SelectedFloor = source.SelectedFloor
@@ -90,7 +90,7 @@ namespace CollabCharting
                 BaseRevision = source.BaseRevision,
                 Revision = source.Revision,
                 ClientSeq = source.ClientSeq,
-                AuthorSteamId = source.AuthorSteamId,
+                AuthorUserId = source.AuthorUserId,
                 AuthorName = source.AuthorName,
                 Reason = source.Reason,
                 SelectedFloor = source.SelectedFloor,

@@ -9,10 +9,20 @@ namespace CollabCharting
         public static void Register(Action<string, Func<JToken?, object?>> register)
         {
             register("collab.getStatus", _ => CollabRuntime.Session.GetStatus());
+            register("collab.startAuth", _ => CollabRuntime.Session.StartAuth());
+            register("collab.pollAuth", parameters =>
+            {
+                string loginId = parameters?["loginId"]?.Value<string>() ?? string.Empty;
+                return CollabRuntime.Session.PollAuth(loginId);
+            });
+            register("collab.loginWithToken", parameters =>
+            {
+                string token = parameters?["relayToken"]?.Value<string>() ?? string.Empty;
+                CollabAuthUser user = parameters?["user"]?.ToObject<CollabAuthUser>() ?? new CollabAuthUser();
+                return CollabRuntime.Session.LoginWithToken(token, user);
+            });
             register("collab.createLobby", _ => CollabRuntime.Session.CreateLobby());
             register("collab.leaveLobby", _ => CollabRuntime.Session.LeaveLobby());
-            register("collab.getFriends", _ => CollabRuntime.Session.GetFriends());
-            register("collab.openInviteDialog", _ => CollabRuntime.Session.OpenInviteDialog());
             register("collab.forceSync", _ =>
             {
                 if (ADOBase.editor != null)
@@ -26,11 +36,6 @@ namespace CollabCharting
             {
                 string lobbyId = parameters?["lobbyId"]?.Value<string>() ?? string.Empty;
                 return CollabRuntime.Session.JoinLobby(lobbyId);
-            });
-            register("collab.inviteFriend", parameters =>
-            {
-                string steamId = parameters?["steamId"]?.Value<string>() ?? string.Empty;
-                return CollabRuntime.Session.InviteFriend(steamId);
             });
             register("collab.acquireLock", parameters =>
             {

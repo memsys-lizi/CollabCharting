@@ -11,7 +11,7 @@ namespace CollabCharting
         private static string lastSelectionLockTarget = string.Empty;
         private static string activeSelectionLockTarget = string.Empty;
 
-        public static SteamSessionManager Session { get; } = new SteamSessionManager();
+        public static CollabSessionManager Session { get; } = new CollabSessionManager();
 
         public static bool IsApplyingRemote { get; set; }
 

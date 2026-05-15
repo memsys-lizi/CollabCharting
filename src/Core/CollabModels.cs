@@ -5,7 +5,7 @@ namespace CollabCharting
 {
     internal sealed class CollabMember
     {
-        public string SteamId { get; set; } = string.Empty;
+        public string UserId { get; set; } = string.Empty;
 
         public string Name { get; set; } = string.Empty;
 
@@ -14,20 +14,11 @@ namespace CollabCharting
         public bool IsLocal { get; set; }
     }
 
-    internal sealed class CollabFriend
-    {
-        public string SteamId { get; set; } = string.Empty;
-
-        public string Name { get; set; } = string.Empty;
-
-        public string State { get; set; } = string.Empty;
-    }
-
     internal sealed class CollabLock
     {
         public string Target { get; set; } = string.Empty;
 
-        public string OwnerSteamId { get; set; } = string.Empty;
+        public string OwnerUserId { get; set; } = string.Empty;
 
         public string OwnerName { get; set; } = string.Empty;
 
@@ -36,9 +27,9 @@ namespace CollabCharting
 
     internal sealed class CollabStatus
     {
-        public bool SteamAvailable { get; set; }
+        public bool AccountAvailable { get; set; }
 
-        public string LocalSteamId { get; set; } = string.Empty;
+        public string LocalUserId { get; set; } = string.Empty;
 
         public string LocalName { get; set; } = string.Empty;
 
@@ -48,7 +39,7 @@ namespace CollabCharting
 
         public string LobbyId { get; set; } = string.Empty;
 
-        public string HostSteamId { get; set; } = string.Empty;
+        public string HostUserId { get; set; } = string.Empty;
 
         public string LevelName { get; set; } = string.Empty;
 
@@ -67,6 +58,37 @@ namespace CollabCharting
         public List<CollabLock> Locks { get; set; } = new List<CollabLock>();
 
         public List<string> RecentEvents { get; set; } = new List<string>();
+    }
+
+    internal sealed class CollabAuthStart
+    {
+        public string LoginId { get; set; } = string.Empty;
+
+        public string AuthorizationUrl { get; set; } = string.Empty;
+    }
+
+    internal sealed class CollabAuthUser
+    {
+        public string UserId { get; set; } = string.Empty;
+
+        public string Username { get; set; } = string.Empty;
+
+        public string Nickname { get; set; } = string.Empty;
+
+        public string AvatarUrl { get; set; } = string.Empty;
+
+        public string Email { get; set; } = string.Empty;
+    }
+
+    internal sealed class CollabAuthPoll
+    {
+        public string Status { get; set; } = string.Empty;
+
+        public string RelayToken { get; set; } = string.Empty;
+
+        public string Message { get; set; } = string.Empty;
+
+        public CollabAuthUser? User { get; set; }
     }
 
     internal sealed class ResourceManifestEntry
@@ -107,6 +129,8 @@ namespace CollabCharting
         public string LevelText { get; set; } = string.Empty;
 
         public string LevelRelativePath { get; set; } = string.Empty;
+
+        public ResourceManifest Manifest { get; set; } = new ResourceManifest();
     }
 
     internal sealed class CollabOperationBatch
@@ -119,7 +143,7 @@ namespace CollabCharting
 
         public long ClientSeq { get; set; }
 
-        public string AuthorSteamId { get; set; } = string.Empty;
+        public string AuthorUserId { get; set; } = string.Empty;
 
         public string AuthorName { get; set; } = string.Empty;
 
@@ -191,7 +215,7 @@ namespace CollabCharting
 
         public int Revision { get; set; }
 
-        public string AuthorSteamId { get; set; } = string.Empty;
+        public string AuthorUserId { get; set; } = string.Empty;
 
         public string AuthorName { get; set; } = string.Empty;
 
