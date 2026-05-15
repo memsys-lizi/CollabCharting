@@ -17,6 +17,7 @@ out/
 node_modules/
 webui/dist/
 *.tsbuildinfo
+*.lscache
 
 # NuGet Packages
 *.nupkg
