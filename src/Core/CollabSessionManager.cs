@@ -1344,7 +1344,6 @@ namespace CollabCharting
 
         private void EmitStatus()
         {
-            Main.EmitOverlayEvent("collab.status", GetStatus());
         }
 
         private void Fail(string message)

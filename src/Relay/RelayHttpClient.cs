@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace CollabCharting
 {
@@ -68,12 +69,22 @@ namespace CollabCharting
         {
             HttpWebRequest request = CreateRequest(pathAndQuery, relayToken);
             request.Method = "GET";
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            using (Stream stream = response.GetResponseStream())
-            using (var reader = new StreamReader(stream, Encoding.UTF8))
+            try
             {
-                string json = reader.ReadToEnd();
-                return JsonConvert.DeserializeObject<T>(json) ?? throw new InvalidDataException("Relay response is empty.");
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (Stream stream = response.GetResponseStream())
+                using (var reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    string json = reader.ReadToEnd();
+                    return JsonConvert.DeserializeObject<T>(json) ?? throw new InvalidDataException("Relay response is empty.");
+                }
+            }
+            catch (WebException ex) when (ex.Response is HttpWebResponse response)
+            {
+                string body = ReadResponseBody(response);
+                string message = TryGetServerMessage(body) ??
+                    $"协作服务请求失败：{(int)response.StatusCode} {response.StatusDescription}";
+                throw new InvalidOperationException(message, ex);
             }
         }
 
@@ -88,6 +99,39 @@ namespace CollabCharting
             }
 
             return request;
+        }
+
+        private static string ReadResponseBody(WebResponse response)
+        {
+            try
+            {
+                using (Stream stream = response.GetResponseStream())
+                using (var reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    return reader.ReadToEnd();
+                }
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static string? TryGetServerMessage(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return null;
+            }
+
+            try
+            {
+                return JObject.Parse(body).Value<string>("message");
+            }
+            catch
+            {
+                return body;
+            }
         }
     }
 }

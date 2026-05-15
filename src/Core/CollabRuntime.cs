@@ -41,7 +41,6 @@ namespace CollabCharting
                 RefreshSelectionLock(dt);
                 EditorCommandCapture.Tick();
                 OperationCapture.Update(dt);
-                EditorToolbarEntry.Tick();
                 EditorLockOverlay.Update();
             }
             catch (Exception ex)

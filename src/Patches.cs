@@ -5,15 +5,6 @@ namespace CollabCharting
     using ADOFAI.LevelEditor.Controls;
     using HarmonyLib;
 
-    [HarmonyPatch(typeof(scnEditor), "Start")]
-    internal static class EditorStartPatch
-    {
-        private static void Postfix(scnEditor __instance)
-        {
-            EditorToolbarEntry.Install(__instance);
-        }
-    }
-
     [HarmonyPatch(typeof(scnEditor), "SelectFloor", new[] { typeof(scrFloor), typeof(bool) })]
     internal static class EditorSelectFloorPatch
     {

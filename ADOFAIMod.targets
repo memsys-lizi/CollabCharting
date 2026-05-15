@@ -25,10 +25,13 @@
             <OutDir>$(ProjectDir)out\</OutDir>
         </PropertyGroup>
         <RemoveDir Directories="$(OutDir)Resources" Condition="Exists('$(OutDir)Resources')" />
+        <RemoveDir Directories="$(OutDir)webui" Condition="Exists('$(OutDir)webui')" />
+        <Delete Files="$(OutDir)ADOFAIWebBridge.dll;$(OutDir)EmbedIO.dll;$(OutDir)Swan.Lite.dll;$(OutDir)System.ValueTuple.dll" />
         <MakeDir Directories="$(OutDir)" />
         <MakeDir Directories="$(OutDir)Resources" />
         <ItemGroup>
             <FilesToCopy Include="$(OutputPath)$(AssemblyName).dll" />
+            <FilesToCopy Include="$(OutputPath)Newtonsoft.Json.dll" Condition="Exists('$(OutputPath)Newtonsoft.Json.dll')" />
             <FilesToCopy Include="$(ProjectDir)Info.json" />
             <ResourceFiles Include="$(ProjectDir)Resources\**\*" Exclude="$(ProjectDir)Resources\**\*\" />
         </ItemGroup>
@@ -49,7 +52,8 @@
 
         <MakeDir Directories="$(ModsDir)" />
         <RemoveDir Directories="$(ModsDir)Resources" Condition="Exists('$(ModsDir)Resources')" />
-        <RemoveDir Directories="$(ModsDir)webui\dist" Condition="Exists('$(ModsDir)webui\dist')" />
+        <RemoveDir Directories="$(ModsDir)webui" Condition="Exists('$(ModsDir)webui')" />
+        <Delete Files="$(ModsDir)ADOFAIWebBridge.dll;$(ModsDir)EmbedIO.dll;$(ModsDir)Swan.Lite.dll;$(ModsDir)System.ValueTuple.dll" />
         <MakeDir Directories="$(ModsDir)Resources" />
         <ItemGroup>
             <ModFiles Include="$(ProjectDir)out\**\*" Exclude="$(ProjectDir)out\Resources\**\*;$(ProjectDir)out\Resources\**\*\" />

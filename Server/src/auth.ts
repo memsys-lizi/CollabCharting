@@ -30,6 +30,12 @@ function base64url(bytes: Buffer) {
   return bytes.toString("base64url");
 }
 
+function buildAuthorizationUrl(params: URLSearchParams) {
+  const base = config.oauth.authorizeUrl;
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}${params.toString()}`;
+}
+
 function pruneSessions() {
   const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [id, session] of sessions) {
@@ -56,16 +62,17 @@ export function createLoginSession() {
     createdAt: Date.now()
   });
 
-  const url = new URL(config.oauth.authorizeUrl);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", config.oauth.clientId);
-  url.searchParams.set("redirect_uri", config.oauth.redirectUri);
-  url.searchParams.set("scope", "openid profile email");
-  url.searchParams.set("state", `${loginId}.${state}`);
-  url.searchParams.set("code_challenge", codeChallenge);
-  url.searchParams.set("code_challenge_method", "S256");
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: config.oauth.clientId,
+    redirect_uri: config.oauth.redirectUri,
+    scope: "openid profile email",
+    state: `${loginId}.${state}`,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256"
+  });
 
-  return { loginId, authorizationUrl: url.toString() };
+  return { loginId, authorizationUrl: buildAuthorizationUrl(params) };
 }
 
 export async function completeLogin(code: string, packedState: string) {
