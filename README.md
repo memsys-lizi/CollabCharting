@@ -38,7 +38,14 @@ Copy-Item .env.example .env
 pnpm dev
 ```
 
-开发服务器默认监听：
+Relay 服务器生产地址：
+
+```text
+https://collabcharting.adofaitools.top
+wss://collabcharting.adofaitools.top/ws
+```
+
+本地开发时可以用环境变量覆盖为：
 
 ```text
 http://127.0.0.1:39810
